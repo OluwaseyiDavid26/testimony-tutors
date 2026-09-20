@@ -12,11 +12,20 @@ export default {
       .eq("auth_user_id", userClaims.id)
       .single();
 
-    if (callerErr || !callerStaff) {
-      return Response.json({ error: "Not authorized." }, { status: 403 });
-    }
+    // if (callerErr || !callerStaff) {
+    //   return Response.json({ error: "Not authorized." }, { status: 403 });
+    // }
 
-    const body = await req.json();
+    // const body = await req.json();
+    if (callerErr || !callerStaff) {
+  return Response.json({ error: "Not authorized." }, { status: 403 });
+}
+
+// Server decides this — never trust the client for approval status
+const autoApprovalStatus = callerStaff.role === "admin" ? "approved" : "pending";
+
+const body = await req.json();
+
     const {
       firstName, lastName, dob, gender, phone, address, branch,
       department, classSession, examTypes, subjects, regDate, amountPaid,
@@ -75,8 +84,10 @@ export default {
         guardian_name: guardianName || null,
         guardian_phone: guardianPhone || null,
         eligible: eligible ?? false,
-        approval_status: "approved",
-        added_by: addedBy || "admin"
+        approval_status: autoApprovalStatus,
+        added_by: addedBy || callerStaff.id
+        // approval_status: "approved",
+        // added_by: addedBy || "admin"
       })
       .select()
       .single();
