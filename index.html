@@ -11287,9 +11287,12 @@ ANSWER: B"
         const { error } = await supabaseClient
           .from("students")
           .update({
+            // first_name: firstName,
+            // last_name: lastName,
+            // full_name: firstName + " " + lastName,
+            // phone: document.getElementById("editPhone").value.trim(),
             first_name: firstName,
             last_name: lastName,
-            full_name: firstName + " " + lastName,
             phone: document.getElementById("editPhone").value.trim(),
             branch: document.getElementById("editBranch").value,
             department: document.getElementById("editDepartment").value,
