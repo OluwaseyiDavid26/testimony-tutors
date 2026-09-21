@@ -10174,6 +10174,62 @@ ANSWER: B"
           return;
         }
 
+        async function syncTestsFromSupabase() {
+          const { data, error } = await supabaseClient
+            .from("tests")
+            .select("*")
+            .order("created_at", { ascending: true });
+
+          if (error) {
+            console.error("Failed to sync tests:", error);
+            return;
+          }
+
+          const mapped = (data || []).map((row) => ({
+            id: row.id,
+            name: row.name,
+            type: row.type,
+            subject: row.subject,
+            department: row.department,
+            date: row.date,
+            startTime: row.start_time,
+            endTime: row.end_time,
+            duration: row.duration_minutes,
+            status: row.status,
+            totalMarks: row.total_marks,
+            resultsPosted: row.results_posted,
+            requiresClockIn: row.requires_clock_in,
+          }));
+
+          ls("tests", mapped);
+        }
+
+        async function syncTestQuestionsFromSupabase(testId) {
+          const { data, error } = await supabaseClient
+            .from("test_questions")
+            .select("*")
+            .eq("test_id", testId)
+            .order("order_index", { ascending: true });
+
+          if (error) {
+            console.error("Failed to sync test questions:", error);
+            return [];
+          }
+
+          const questions = (data || []).map((row) => ({
+            id: row.id,
+            question: row.question_text,
+            options: row.options,
+            correct: row.options.indexOf(row.correct_answer),
+            marks: row.marks,
+          }));
+
+          const tq = ls("testQuestions") || {};
+          tq[testId] = questions;
+          ls("testQuestions", tq);
+          return questions;
+        }
+
         const mapped = (data || []).map((row) => ({
           id: row.id,
           date: row.date,
@@ -10710,6 +10766,7 @@ ANSWER: B"
         const eligible = document.getElementById("eligibleCheckbox").checked;
 
         const payload = {
+          photo: uploadedPhotoData || null,
           firstName: document.getElementById("firstName").value.trim(),
           lastName: lname,
           dob: document.getElementById("dob").value,
@@ -11147,12 +11204,64 @@ ANSWER: B"
         updatePaymentPlanDropdowns();
       }
 
-      function updateStudent(e) {
+      // function updateStudent(e) {
+      //   e.preventDefault();
+      //   const students = ls("students") || [];
+      //   const id = document.getElementById("editStudentId").value;
+      //   const idx = students.findIndex((s) => s.id === id);
+      //   if (idx < 0) return;
+      //   const examTypes = getExamTypesFromCheckboxes(
+      //     document.getElementById("editExamCheckboxes"),
+      //   );
+      //   if (examTypes.length === 0) {
+      //     alert("Please select at least one exam type.");
+      //     return;
+      //   }
+      //   const chosenSubjects = getCheckedSubjects("editSubjectsCheckboxGroup");
+      //   if (chosenSubjects.length === 0) {
+      //     alert("Please select at least one subject.");
+      //     return;
+      //   }
+      //   if (isJambOnly(examTypes) && chosenSubjects.length > 4) {
+      //     alert(
+      //       "⚠️ JAMB-only students can select a maximum of 4 subjects. Please adjust your selection.",
+      //     );
+      //     return;
+      //   }
+      //   students[idx].firstName = document
+      //     .getElementById("editFirstName")
+      //     .value.trim();
+      //   students[idx].lastName = document
+      //     .getElementById("editLastName")
+      //     .value.trim();
+      //   students[idx].fullName =
+      //     students[idx].firstName + " " + students[idx].lastName;
+      //   students[idx].phone = document.getElementById("editPhone").value.trim();
+      //   students[idx].branch = document.getElementById("editBranch").value;
+      //   students[idx].department =
+      //     document.getElementById("editDepartment").value;
+      //   students[idx].examTypes = examTypes;
+      //   students[idx].subjects = chosenSubjects;
+      //   students[idx].classSession =
+      //     document.getElementById("editClassSession").value;
+      //   students[idx].paymentPlan = students[idx].paymentPlan || "full";
+      //   students[idx].paymentDate =
+      //     document.getElementById("editPaymentDate").value;
+      //   students[idx].eligible = document.getElementById(
+      //     "editEligibleCheckbox",
+      //   ).checked;
+      //   if (students[idx].lastName !== students[idx].password) {
+      //     students[idx].password = students[idx].lastName.toLowerCase();
+      //   }
+      //   ls("students", students);
+      //   closeModal("editStudentModal");
+      //   renderStudentsTable();
+      //   alert("✅ Student updated!");
+      // }
+
+      async function updateStudent(e) {
         e.preventDefault();
-        const students = ls("students") || [];
         const id = document.getElementById("editStudentId").value;
-        const idx = students.findIndex((s) => s.id === id);
-        if (idx < 0) return;
         const examTypes = getExamTypesFromCheckboxes(
           document.getElementById("editExamCheckboxes"),
         );
@@ -11171,32 +11280,33 @@ ANSWER: B"
           );
           return;
         }
-        students[idx].firstName = document
-          .getElementById("editFirstName")
-          .value.trim();
-        students[idx].lastName = document
-          .getElementById("editLastName")
-          .value.trim();
-        students[idx].fullName =
-          students[idx].firstName + " " + students[idx].lastName;
-        students[idx].phone = document.getElementById("editPhone").value.trim();
-        students[idx].branch = document.getElementById("editBranch").value;
-        students[idx].department =
-          document.getElementById("editDepartment").value;
-        students[idx].examTypes = examTypes;
-        students[idx].subjects = chosenSubjects;
-        students[idx].classSession =
-          document.getElementById("editClassSession").value;
-        students[idx].paymentPlan = students[idx].paymentPlan || "full";
-        students[idx].paymentDate =
-          document.getElementById("editPaymentDate").value;
-        students[idx].eligible = document.getElementById(
-          "editEligibleCheckbox",
-        ).checked;
-        if (students[idx].lastName !== students[idx].password) {
-          students[idx].password = students[idx].lastName.toLowerCase();
+
+        const firstName = document.getElementById("editFirstName").value.trim();
+        const lastName = document.getElementById("editLastName").value.trim();
+
+        const { error } = await supabaseClient
+          .from("students")
+          .update({
+            first_name: firstName,
+            last_name: lastName,
+            full_name: firstName + " " + lastName,
+            phone: document.getElementById("editPhone").value.trim(),
+            branch: document.getElementById("editBranch").value,
+            department: document.getElementById("editDepartment").value,
+            exam_types: examTypes,
+            subjects: chosenSubjects,
+            class_session: document.getElementById("editClassSession").value,
+            payment_date: document.getElementById("editPaymentDate").value,
+            eligible: document.getElementById("editEligibleCheckbox").checked,
+          })
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to update student: " + error.message);
+          return;
         }
-        ls("students", students);
+
+        await syncStudentsFromSupabase();
         closeModal("editStudentModal");
         renderStudentsTable();
         alert("✅ Student updated!");
@@ -13706,33 +13816,71 @@ ANSWER: B"
         row.style.display = isAssessment ? "none" : "flex";
       }
 
-      function addTest(e) {
+      // function addTest(e) {
+      //   e.preventDefault();
+      //   const tests = ls("tests") || [];
+      //   const isAssessment =
+      //     document.getElementById("testDeliveryMode").value === "assessment";
+      //   const newTest = {
+      //     id: "TEST" + Date.now(),
+      //     name: document.getElementById("testName").value,
+      //     type: document.getElementById("testTypeSelect").value || "Test",
+      //     subject: document.getElementById("testSubject").value,
+      //     department: document.getElementById("testDepartment").value,
+      //     date: document.getElementById("testDate").value,
+      //     startTime: document.getElementById("testStartTime").value,
+      //     endTime: document.getElementById("testEndTime").value,
+      //     duration: parseInt(document.getElementById("testDuration").value),
+      //     status: "Upcoming",
+      //     totalMarks: 0,
+      //     resultsPosted: false,
+      //     requiresClockIn: !isAssessment,
+      //   };
+      //   tests.push(newTest);
+      //   ls("tests", tests);
+      //   closeModal("addTestModal");
+      //   document.getElementById("addTestModal").querySelector("form").reset();
+      //   toggleTestDeliveryMode();
+      //   renderTestsTable();
+      //   openTestQuestionPanel(newTest.id);
+      // }
+      async function addTest(e) {
         e.preventDefault();
-        const tests = ls("tests") || [];
         const isAssessment =
           document.getElementById("testDeliveryMode").value === "assessment";
-        const newTest = {
-          id: "TEST" + Date.now(),
-          name: document.getElementById("testName").value,
-          type: document.getElementById("testTypeSelect").value || "Test",
-          subject: document.getElementById("testSubject").value,
-          department: document.getElementById("testDepartment").value,
-          date: document.getElementById("testDate").value,
-          startTime: document.getElementById("testStartTime").value,
-          endTime: document.getElementById("testEndTime").value,
-          duration: parseInt(document.getElementById("testDuration").value),
-          status: "Upcoming",
-          totalMarks: 0,
-          resultsPosted: false,
-          requiresClockIn: !isAssessment,
-        };
-        tests.push(newTest);
-        ls("tests", tests);
+
+        const { data, error } = await supabaseClient
+          .from("tests")
+          .insert({
+            name: document.getElementById("testName").value,
+            type: document.getElementById("testTypeSelect").value || "Test",
+            subject: document.getElementById("testSubject").value,
+            department: document.getElementById("testDepartment").value,
+            date: document.getElementById("testDate").value,
+            start_time: document.getElementById("testStartTime").value,
+            end_time: document.getElementById("testEndTime").value,
+            duration_minutes: parseInt(
+              document.getElementById("testDuration").value,
+            ),
+            status: "Upcoming",
+            total_marks: 0,
+            results_posted: false,
+            requires_clock_in: !isAssessment,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          alert("❌ Failed to create test: " + error.message);
+          return;
+        }
+
+        await syncTestsFromSupabase();
         closeModal("addTestModal");
         document.getElementById("addTestModal").querySelector("form").reset();
         toggleTestDeliveryMode();
         renderTestsTable();
-        openTestQuestionPanel(newTest.id);
+        openTestQuestionPanel(data.id);
       }
 
       function toggleTestStatus(id) {
@@ -17124,6 +17272,7 @@ ANSWER: B"
         const paymentDate = document.getElementById("sfPaymentDate").value;
 
         const payload = {
+          photo: staffUploadedPhotoData || null,
           firstName: document.getElementById("sfFirstName").value.trim(),
           lastName: lname,
           dob: document.getElementById("sfDob").value,

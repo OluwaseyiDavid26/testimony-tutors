@@ -29,7 +29,7 @@ const body = await req.json();
     const {
       firstName, lastName, dob, gender, phone, address, branch,
       department, classSession, examTypes, subjects, regDate, amountPaid,
-      paymentDate, guardianName, guardianPhone, eligible, addedBy
+      paymentDate, guardianName, guardianPhone, eligible, addedBy , photo
     } = body;
 
     if (!firstName || !lastName) {
@@ -65,6 +65,7 @@ const body = await req.json();
     const { data: studentRow, error: insertErr } = await supabaseAdmin
       .from("students")
       .insert({
+        photo_url: photo || null,
         auth_user_id: newUser.user.id,
         reg_no: regNo,
         first_name: firstName,
