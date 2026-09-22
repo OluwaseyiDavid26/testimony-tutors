@@ -4733,9 +4733,17 @@
                 >
                   🖨️ Print
                 </button>
-                <button class="btn btn-outline" onclick="exportAttendance()">
-                  📥 Export CSV
+                <button
+                  class="btn btn-outline"
+                  onclick="
+                    syncAttendanceFromSupabase().then(renderAttendanceTable)
+                  "
+                >
+                  🔄 Refresh
                 </button>
+                <!-- <button class="btn btn-outline" onclick="exportAttendance()">
+                  📥 Export CSV
+                </button> -->
               </div>
             </div>
             <div class="search-bar">
@@ -17708,7 +17716,8 @@ ANSWER: B"
             );
             return;
           }
-          staffPerformClockIn(student, staff);
+          // staffPerformClockIn(student, staff);
+          await staffPerformClockIn(student, staff);
         } else if (!todayEntry.clockOut) {
           const clockInMs = todayEntry.clockInTimeMs || 0;
           const elapsedMins = (Date.now() - clockInMs) / 60000;
@@ -17763,9 +17772,44 @@ ANSWER: B"
         }
       }
 
-      function staffPerformClockIn(student, staff) {
+      // function staffPerformClockIn(student, staff) {
+      //   const result = document.getElementById("staffScanResult");
+      //   const attendance = ls("attendance") || [];
+      //   const now = new Date();
+      //   const todayStr = fmtDate(now);
+      //   const timeStr = now.toLocaleTimeString("en-GB", {
+      //     hour: "2-digit",
+      //     minute: "2-digit",
+      //     second: "2-digit",
+      //   });
+      //   attendance.push({
+      //     id: "ATT" + Date.now(),
+      //     date: todayStr,
+      //     regNo: student.regNo,
+      //     name: student.fullName,
+      //     branch: student.branch,
+      //     clockIn: timeStr,
+      //     clockOut: null,
+      //     status: "clocked-in",
+      //     clockInTimeMs: Date.now(),
+      //     scannedBy: staff.id,
+      //   });
+      //   ls("attendance", attendance);
+      //   result.className = "scan-result success";
+      //   result.style.display = "block";
+      //   result.innerHTML = `✅ CLOCKED IN — ${student.fullName} (${student.regNo})<br>Branch: ${student.branch} | Time: ${timeStr}`;
+      //   logActivity(
+      //     staff,
+      //     "attendance",
+      //     `Clocked in ${student.fullName} (${student.regNo})`,
+      //     "info",
+      //   );
+      //   renderStaffAttendanceTable();
+      //   renderStaffStats();
+      // }
+
+      async function staffPerformClockIn(student, staff) {
         const result = document.getElementById("staffScanResult");
-        const attendance = ls("attendance") || [];
         const now = new Date();
         const todayStr = fmtDate(now);
         const timeStr = now.toLocaleTimeString("en-GB", {
@@ -17773,22 +17817,30 @@ ANSWER: B"
           minute: "2-digit",
           second: "2-digit",
         });
-        attendance.push({
-          id: "ATT" + Date.now(),
+
+        const { error } = await supabaseClient.from("attendance").insert({
+          student_id: student.id,
           date: todayStr,
-          regNo: student.regNo,
-          name: student.fullName,
           branch: student.branch,
-          clockIn: timeStr,
-          clockOut: null,
+          clock_in: timeStr,
+          clock_out: null,
           status: "clocked-in",
-          clockInTimeMs: Date.now(),
-          scannedBy: staff.id,
+          clock_in_ms: Date.now(),
         });
-        ls("attendance", attendance);
+
+        if (error) {
+          result.className = "scan-result error";
+          result.style.display = "block";
+          result.innerHTML = "❌ Failed to record clock-in: " + error.message;
+          return;
+        }
+
+        await syncAttendanceFromSupabase();
+
         result.className = "scan-result success";
         result.style.display = "block";
         result.innerHTML = `✅ CLOCKED IN — ${student.fullName} (${student.regNo})<br>Branch: ${student.branch} | Time: ${timeStr}`;
+
         logActivity(
           staff,
           "attendance",
