@@ -9769,6 +9769,90 @@ ANSWER: B"
       //    loadStudentDashboard();
       //    showWelcomeModal();
       //  }
+
+      // =================== ID CARD LAYOUTS SYNC ===================
+
+      // =================== PENDING EDITS SYNC ===================
+
+      async function syncPaymentPlansFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("payment_plans")
+          .select("*");
+        if (error) {
+          console.error("syncPaymentPlans failed:", error);
+          return;
+        }
+        const plans = {
+          morning: { amount: 15000, days: 30 },
+          afternoon: { amount: 15000, days: 30 },
+        };
+        (data || []).forEach((row) => {
+          const key = (row.session || "").toLowerCase();
+          if (key === "morning" || key === "afternoon") {
+            plans[key] = {
+              amount: Number(row.amount) || 0,
+              days: Number(row.days) || 30,
+            };
+          }
+        });
+        ls("paymentPlans", plans);
+      }
+
+      async function syncPendingEditsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("pending_edits")
+          .select("*, students(reg_no, full_name, branch)")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("syncPendingEdits failed:", error);
+          return;
+        }
+
+        const mapped = (data || []).map((row) => ({
+          id: row.id,
+          studentId: row.entity_id,
+          studentName: row.students
+            ? row.students.full_name
+            : row.payload?.studentName || "",
+          regNo: row.students ? row.students.reg_no : row.payload?.regNo || "",
+          branch: row.students
+            ? row.students.branch
+            : row.payload?.branch || "",
+          staffId: row.requested_by,
+          staffName: row.payload?.staffName || "",
+          changes: row.payload?.changes || {},
+          reason: row.payload?.reason || "",
+          status: row.status,
+          timestamp: row.created_at,
+        }));
+
+        ls("pendingEdits", mapped);
+      }
+
+      async function syncIDCardLayoutsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("id_card_layouts")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("syncIDCardLayouts failed:", error);
+          return;
+        }
+
+        const mapped = (data || []).map((row) => ({
+          id: row.id,
+          name: row.name,
+          regNos: row.config?.regNos || [],
+          cardsPerPage: row.config?.cardsPerPage || "8",
+          savedDate:
+            row.config?.savedDate || row.created_at?.slice(0, 10) || "",
+        }));
+
+        ls("idCardLayouts", mapped);
+      }
+
       async function syncActivityLogFromSupabase() {
         const { data, error } = await supabaseClient
           .from("activity_log")
@@ -10171,6 +10255,100 @@ ANSWER: B"
 
         ls("attendance", mapped);
       }
+
+      // =================== TESTS SYNC (top-level) ===================
+      async function syncTestsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("tests")
+          .select("*")
+          .order("created_at", { ascending: true });
+        if (error) {
+          console.error("syncTests failed:", error);
+          return;
+        }
+        ls(
+          "tests",
+          (data || []).map((row) => ({
+            id: row.id,
+            name: row.name,
+            type: row.type,
+            subject: row.subject,
+            department: row.department,
+            date: row.date,
+            startTime: row.start_time,
+            endTime: row.end_time,
+            duration: row.duration_minutes,
+            status: row.status,
+            totalMarks: row.total_marks,
+            resultsPosted: row.results_posted,
+            requiresClockIn: row.requires_clock_in,
+          })),
+        );
+      }
+
+      async function syncTestQuestionsFromSupabase(testId) {
+        const { data, error } = await supabaseClient
+          .from("test_questions")
+          .select("*")
+          .eq("test_id", testId)
+          .order("order_index", { ascending: true });
+        if (error) {
+          console.error("syncTestQuestions failed:", error);
+          return [];
+        }
+        const questions = (data || []).map((row) => ({
+          id: row.id,
+          question: row.question_text,
+          options: row.options,
+          correct: Array.isArray(row.options)
+            ? row.options.indexOf(row.correct_answer)
+            : 0,
+          marks: row.marks,
+          explanation: row.explanation || "",
+        }));
+        const tq = ls("testQuestions") || {};
+        tq[testId] = questions;
+        ls("testQuestions", tq);
+        return questions;
+      }
+
+      async function syncAllTestQuestionsFromSupabase() {
+        const tests = ls("tests") || [];
+        if (!tests.length) return;
+        await Promise.all(
+          tests.map((t) => syncTestQuestionsFromSupabase(t.id)),
+        );
+      }
+
+      async function syncTestResultsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("test_results")
+          .select("*, students(reg_no, full_name)")
+          .order("created_at", { ascending: true });
+        if (error) {
+          console.error("syncTestResults failed:", error);
+          return;
+        }
+        ls(
+          "testResults",
+          (data || []).map((row) => ({
+            id: row.id,
+            testId: row.test_id,
+            testName: row.test_name,
+            subject: row.subject,
+            regNo: row.students ? row.students.reg_no : "",
+            studentName: row.students ? row.students.full_name : "",
+            score: row.score,
+            totalMarks: row.total_marks,
+            percentage: row.percentage,
+            grade: row.grade,
+            timeTaken: row.time_taken || 0,
+            date: row.date,
+            posted: row.posted,
+            review: row.review || [],
+          })),
+        );
+      }
       async function syncPaymentsFromSupabase() {
         const { data, error } = await supabaseClient
           .from("payments")
@@ -10181,6 +10359,35 @@ ANSWER: B"
           console.error("Failed to sync payments from Supabase:", error);
           return;
         }
+
+        // async function syncTestsFromSupabase() {
+        //   const { data, error } = await supabaseClient
+        //     .from("tests")
+        //     .select("*")
+        //     .order("created_at", { ascending: true });
+        //   if (error) {
+        //     console.error("syncTests failed:", error);
+        //     return;
+        //   }
+        //   ls(
+        //     "tests",
+        //     (data || []).map((row) => ({
+        //       id: row.id,
+        //       name: row.name,
+        //       type: row.type,
+        //       subject: row.subject,
+        //       department: row.department,
+        //       date: row.date,
+        //       startTime: row.start_time,
+        //       endTime: row.end_time,
+        //       duration: row.duration_minutes,
+        //       status: row.status,
+        //       totalMarks: row.total_marks,
+        //       resultsPosted: row.results_posted,
+        //       requiresClockIn: row.requires_clock_in,
+        //     })),
+        //   );
+        // }
 
         async function syncTestsFromSupabase() {
           const { data, error } = await supabaseClient
@@ -10212,31 +10419,79 @@ ANSWER: B"
           ls("tests", mapped);
         }
 
-        async function syncTestQuestionsFromSupabase(testId) {
-          const { data, error } = await supabaseClient
-            .from("test_questions")
-            .select("*")
-            .eq("test_id", testId)
-            .order("order_index", { ascending: true });
+        // async function syncTestQuestionsFromSupabase(testId) {
+        //   const { data, error } = await supabaseClient
+        //     .from("test_questions")
+        //     .select("*")
+        //     .eq("test_id", testId)
+        //     .order("order_index", { ascending: true });
+        //   if (error) {
+        //     console.error("syncTestQuestions failed:", error);
+        //     return [];
+        //   }
+        //   const questions = (data || []).map((row) => ({
+        //     id: row.id,
+        //     question: row.question_text,
+        //     options: row.options,
+        //     correct: Array.isArray(row.options)
+        //       ? row.options.indexOf(row.correct_answer)
+        //       : 0,
+        //     marks: row.marks,
+        //     explanation: row.explanation || "",
+        //   }));
+        //   const tq = ls("testQuestions") || {};
+        //   tq[testId] = questions;
+        //   ls("testQuestions", tq);
+        //   return questions;
+        // }
 
-          if (error) {
-            console.error("Failed to sync test questions:", error);
-            return [];
-          }
+        // async function syncTestResultsFromSupabase() {
+        //   const { data, error } = await supabaseClient
 
-          const questions = (data || []).map((row) => ({
-            id: row.id,
-            question: row.question_text,
-            options: row.options,
-            correct: row.options.indexOf(row.correct_answer),
-            marks: row.marks,
-          }));
+        //     .from("test_results")
 
-          const tq = ls("testQuestions") || {};
-          tq[testId] = questions;
-          ls("testQuestions", tq);
-          return questions;
-        }
+        //     .select("*, students(reg_no, full_name)")
+
+        //     .order("created_at", { ascending: true });
+
+        //   if (error) {
+        //     console.error("Failed to sync test results:", error);
+
+        //     return;
+        //   }
+
+        //   const mapped = (data || []).map((row) => ({
+        //     id: row.id,
+
+        //     testId: row.test_id,
+
+        //     testName: row.test_name,
+
+        //     subject: row.subject,
+
+        //     regNo: row.students ? row.students.reg_no : "",
+
+        //     studentName: row.students ? row.students.full_name : "",
+
+        //     score: row.score,
+
+        //     totalMarks: row.total_marks,
+
+        //     percentage: row.percentage,
+
+        //     grade: row.grade,
+
+        //     timeTaken: row.time_taken || 0,
+
+        //     date: row.date,
+
+        //     posted: row.posted,
+
+        //     review: row.review || [],
+        //   }));
+
+        //   ls("testResults", mapped);
+        // }
 
         const mapped = (data || []).map((row) => ({
           id: row.id,
@@ -10301,6 +10556,7 @@ ANSWER: B"
       }
 
       async function loadAdminDashboard() {
+        await syncAppSettingsFromSupabase();
         await syncStudentsFromSupabase();
         document.getElementById("adminDateLine").textContent =
           // await syncStudentsFromSupabase();
@@ -10469,6 +10725,11 @@ ANSWER: B"
         if (["activityLog", "approvals", "dashboard"].includes(section)) {
           await syncActivityLogFromSupabase();
         }
+        if (["tests", "dashboard"].includes(section)) {
+          await syncTestsFromSupabase();
+          await syncAllTestQuestionsFromSupabase();
+          await syncTestResultsFromSupabase();
+        }
         document
           .querySelectorAll("#adminDashboard .content-section")
           .forEach((s) => s.classList.remove("active"));
@@ -10536,7 +10797,11 @@ ANSWER: B"
           updateAutoLoginPreview();
           updatePaymentPlanDropdowns();
         }
-        if (section === "paymentSettings") loadPaymentSettings();
+        // if (section === "paymentSettings") loadPaymentSettings();
+        if (section === "paymentSettings") {
+  await syncPaymentPlansFromSupabase();
+  loadPaymentSettings();
+}
         if (section === "complaints") renderComplaintsAdmin();
         if (section === "announcements") renderAnnouncementsAdmin();
         if (section === "idCardSettings") {
@@ -10546,9 +10811,17 @@ ANSWER: B"
         }
         if (section === "printIDCards") initPrintIDCardsView();
         if (section === "staffAccounts") renderStaffAccounts();
-        if (section === "approvals") renderApprovals();
+        // if (section === "approvals") renderApprovals();
+        if (section === "approvals") {
+          await syncPendingEditsFromSupabase();
+          renderApprovals();
+        }
         if (section === "activityLog") renderActivityLog();
-        if (section === "welcomeGateAdmin") renderWelcomeGateAdmin();
+        // if (section === "welcomeGateAdmin") renderWelcomeGateAdmin();
+        if (section === "welcomeGateAdmin") {
+          await syncAppSettingsFromSupabase();
+          renderWelcomeGateAdmin();
+        }
         if (section !== "attendance") stopCameraScanner();
         if (section === "attendance") {
           setTimeout(() => {
@@ -11707,7 +11980,29 @@ ANSWER: B"
         }
       }
 
-      function saveCurrentLayout() {
+      // function saveCurrentLayout() {
+      //   if (!pickerSelectedRegNos.size) {
+      //     alert("Select at least one student first.");
+      //     return;
+      //   }
+      //   const name = prompt(
+      //     'Name this layout (e.g., "SS3 Science - July Batch"):',
+      //   );
+      //   if (!name) return;
+      //   const layouts = ls("idCardLayouts") || [];
+      //   layouts.push({
+      //     id: "LAYOUT" + Date.now(),
+      //     name,
+      //     regNos: [...pickerSelectedRegNos],
+      //     cardsPerPage: document.getElementById("cardsPerPageSelect").value,
+      //     savedDate: fmtDate(new Date()),
+      //   });
+      //   ls("idCardLayouts", layouts);
+      //   populateSavedLayoutsDropdown();
+      //   alert("✅ Layout saved: " + name);
+      // }
+
+      async function saveCurrentLayout() {
         if (!pickerSelectedRegNos.size) {
           alert("Select at least one student first.");
           return;
@@ -11716,22 +12011,44 @@ ANSWER: B"
           'Name this layout (e.g., "SS3 Science - July Batch"):',
         );
         if (!name) return;
-        const layouts = ls("idCardLayouts") || [];
-        layouts.push({
-          id: "LAYOUT" + Date.now(),
+
+        const regNos = [...pickerSelectedRegNos];
+        const cardsPerPage =
+          document.getElementById("cardsPerPageSelect").value;
+        const savedDate = fmtDate(new Date());
+
+        const { error } = await supabaseClient.from("id_card_layouts").insert({
           name,
-          regNos: [...pickerSelectedRegNos],
-          cardsPerPage: document.getElementById("cardsPerPageSelect").value,
-          savedDate: fmtDate(new Date()),
+          config: { regNos, cardsPerPage, savedDate },
         });
-        ls("idCardLayouts", layouts);
+
+        if (error) {
+          alert("❌ Failed to save layout: " + error.message);
+          return;
+        }
+
+        await syncIDCardLayoutsFromSupabase();
         populateSavedLayoutsDropdown();
-        alert("✅ Layout saved: " + name);
+        alert("✅ Layout saved: " + name + " (synced to all devices)");
       }
 
-      function populateSavedLayoutsDropdown() {
+      // function populateSavedLayoutsDropdown() {
+      //   const layouts = ls("idCardLayouts") || [];
+      //   const sel = document.getElementById("savedLayoutsSelect");
+      //   sel.innerHTML =
+      //     '<option value="">— Load a saved layout —</option>' +
+      //     layouts
+      //       .map(
+      //         (l) =>
+      //           `<option value="${l.id}">${l.name} (${l.regNos.length} students, ${l.savedDate})</option>`,
+      //       )
+      //       .join("");
+      // }
+      async function populateSavedLayoutsDropdown() {
+        await syncIDCardLayoutsFromSupabase();
         const layouts = ls("idCardLayouts") || [];
         const sel = document.getElementById("savedLayoutsSelect");
+        if (!sel) return;
         sel.innerHTML =
           '<option value="">— Load a saved layout —</option>' +
           layouts
@@ -11742,12 +12059,27 @@ ANSWER: B"
             .join("");
       }
 
-      function loadSavedLayout() {
+      // function loadSavedLayout() {
+      //   const id = document.getElementById("savedLayoutsSelect").value;
+      //   if (!id) return;
+      //   const layouts = ls("idCardLayouts") || [];
+      //   const layout = layouts.find((l) => l.id === id);
+      //   if (!layout) return;
+      //   pickerSelectedRegNos = new Set(layout.regNos);
+      //   document.getElementById("cardsPerPageSelect").value =
+      //     layout.cardsPerPage;
+      //   renderStudentPicker();
+      //   renderPrintPreview();
+      // }
+      async function loadSavedLayout() {
         const id = document.getElementById("savedLayoutsSelect").value;
         if (!id) return;
+
+        await syncIDCardLayoutsFromSupabase();
         const layouts = ls("idCardLayouts") || [];
         const layout = layouts.find((l) => l.id === id);
         if (!layout) return;
+
         pickerSelectedRegNos = new Set(layout.regNos);
         document.getElementById("cardsPerPageSelect").value =
           layout.cardsPerPage;
@@ -11755,19 +12087,47 @@ ANSWER: B"
         renderPrintPreview();
       }
 
-      function deleteSavedLayout() {
+      // function deleteSavedLayout() {
+      //   const id = document.getElementById("savedLayoutsSelect").value;
+      //   if (!id) {
+      //     alert("Select a saved layout to delete first.");
+      //     return;
+      //   }
+      //   let layouts = ls("idCardLayouts") || [];
+      //   const layout = layouts.find((l) => l.id === id);
+      //   if (!layout) return;
+      //   if (!confirm(`Delete saved layout "${layout.name}"?`)) return;
+      //   layouts = layouts.filter((l) => l.id !== id);
+      //   ls("idCardLayouts", layouts);
+      //   populateSavedLayoutsDropdown();
+      // }
+
+      async function deleteSavedLayout() {
         const id = document.getElementById("savedLayoutsSelect").value;
         if (!id) {
           alert("Select a saved layout to delete first.");
           return;
         }
-        let layouts = ls("idCardLayouts") || [];
+
+        await syncIDCardLayoutsFromSupabase();
+        const layouts = ls("idCardLayouts") || [];
         const layout = layouts.find((l) => l.id === id);
         if (!layout) return;
         if (!confirm(`Delete saved layout "${layout.name}"?`)) return;
-        layouts = layouts.filter((l) => l.id !== id);
-        ls("idCardLayouts", layouts);
+
+        const { error } = await supabaseClient
+          .from("id_card_layouts")
+          .delete()
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to delete: " + error.message);
+          return;
+        }
+
+        await syncIDCardLayoutsFromSupabase();
         populateSavedLayoutsDropdown();
+        alert("✅ Layout deleted.");
       }
 
       // =================== ID CARD LOGO SETTINGS ===================
@@ -11801,27 +12161,57 @@ ANSWER: B"
         reader.readAsDataURL(file);
       }
 
-      function saveIDCardLogo(e) {
+      // function saveIDCardLogo(e) {
+      //   e.preventDefault();
+      //   const logoData = window._tempLogo || ls("idCardLogo");
+      //   if (!logoData) {
+      //     alert("Please select an image first.");
+      //     return;
+      //   }
+      //   ls("idCardLogo", logoData);
+      //   document.getElementById("logoStatus").innerHTML =
+      //     `<div style="color:var(--success);font-weight:600;">✅ Logo saved successfully!</div>`;
+      //   loadIDCardLogoPreview();
+      //   window._tempLogo = null;
+      // }
+
+      async function saveIDCardLogo(e) {
         e.preventDefault();
         const logoData = window._tempLogo || ls("idCardLogo");
         if (!logoData) {
           alert("Please select an image first.");
           return;
         }
+        const ok = await setAppSetting("idCardLogo", logoData);
+        if (!ok) {
+          alert("❌ Failed to save logo. Check your connection and try again.");
+          return;
+        }
         ls("idCardLogo", logoData);
         document.getElementById("logoStatus").innerHTML =
-          `<div style="color:var(--success);font-weight:600;">✅ Logo saved successfully!</div>`;
+          `<div style="color:var(--success);font-weight:600;">✅ Logo saved (synced to all devices)!</div>`;
         loadIDCardLogoPreview();
         window._tempLogo = null;
       }
 
-      function removeLogo() {
+      // function removeLogo() {
+      //   if (!confirm("Remove the ID card logo/watermark?")) return;
+      //   ls("idCardLogo", null);
+      //   loadIDCardLogoPreview();
+      //   document.getElementById("logoStatus").innerHTML =
+      //     `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed.</div>`;
+      //   // Also clear file input
+      //   document.getElementById("logoInput").value = "";
+      //   window._tempLogo = null;
+      // }
+
+      async function removeLogo() {
         if (!confirm("Remove the ID card logo/watermark?")) return;
+        await setAppSetting("idCardLogo", null);
         ls("idCardLogo", null);
         loadIDCardLogoPreview();
         document.getElementById("logoStatus").innerHTML =
-          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed.</div>`;
-        // Also clear file input
+          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed (synced to all devices).</div>`;
         document.getElementById("logoInput").value = "";
         window._tempLogo = null;
       }
@@ -11859,31 +12249,66 @@ ANSWER: B"
         reader.readAsDataURL(file);
       }
 
-      function saveIdCardHeaderLogo(e) {
+      // function saveIdCardHeaderLogo(e) {
+      //   e.preventDefault();
+      //   const logoData = window._tempIdCardHeaderLogo || ls("idCardHeaderLogo");
+      //   if (!logoData) {
+      //     alert("Please select an image first.");
+      //     return;
+      //   }
+      //   ls("idCardHeaderLogo", logoData);
+      //   document.getElementById("idCardHeaderLogoStatus").innerHTML =
+      //     `<div style="color:var(--success);font-weight:600;">✅ ID card header logo saved!</div>`;
+      //   loadIdCardHeaderLogoPreview();
+      //   window._tempIdCardHeaderLogo = null;
+      // }
+
+      async function saveIdCardHeaderLogo(e) {
         e.preventDefault();
         const logoData = window._tempIdCardHeaderLogo || ls("idCardHeaderLogo");
         if (!logoData) {
           alert("Please select an image first.");
           return;
         }
+        const ok = await setAppSetting("idCardHeaderLogo", logoData);
+        if (!ok) {
+          alert("❌ Failed to save logo. Check your connection and try again.");
+          return;
+        }
         ls("idCardHeaderLogo", logoData);
         document.getElementById("idCardHeaderLogoStatus").innerHTML =
-          `<div style="color:var(--success);font-weight:600;">✅ ID card header logo saved!</div>`;
+          `<div style="color:var(--success);font-weight:600;">✅ ID card header logo saved (synced to all devices)!</div>`;
         loadIdCardHeaderLogoPreview();
         window._tempIdCardHeaderLogo = null;
       }
 
-      function removeIdCardHeaderLogo() {
+      // function removeIdCardHeaderLogo() {
+      //   if (
+      //     !confirm(
+      //       'Remove the ID card header logo? The "TESTIMONY TUTORS" text will show instead.',
+      //     )
+      //   )
+      //     return;
+      //   ls("idCardHeaderLogo", null);
+      //   loadIdCardHeaderLogoPreview();
+      //   document.getElementById("idCardHeaderLogoStatus").innerHTML =
+      //     `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed — text will show instead.</div>`;
+      //   document.getElementById("idCardHeaderLogoInput").value = "";
+      //   window._tempIdCardHeaderLogo = null;
+      // }
+
+      async function removeIdCardHeaderLogo() {
         if (
           !confirm(
             'Remove the ID card header logo? The "TESTIMONY TUTORS" text will show instead.',
           )
         )
           return;
+        await setAppSetting("idCardHeaderLogo", null);
         ls("idCardHeaderLogo", null);
         loadIdCardHeaderLogoPreview();
         document.getElementById("idCardHeaderLogoStatus").innerHTML =
-          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed — text will show instead.</div>`;
+          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed (synced to all devices).</div>`;
         document.getElementById("idCardHeaderLogoInput").value = "";
         window._tempIdCardHeaderLogo = null;
       }
@@ -11933,28 +12358,59 @@ ANSWER: B"
         reader.readAsDataURL(file);
       }
 
-      function saveTopBarLogo(e) {
+      // function saveTopBarLogo(e) {
+      //   e.preventDefault();
+      //   const logoData = window._tempTopBarLogo || ls("topBarLogo");
+      //   if (!logoData) {
+      //     alert("Please select an image first.");
+      //     return;
+      //   }
+      //   ls("topBarLogo", logoData);
+      //   document.getElementById("topBarLogoStatus").innerHTML =
+      //     `<div style="color:var(--success);font-weight:600;">✅ Top bar logo saved!</div>`;
+      //   loadTopBarLogoPreview();
+      //   renderTopBarLogo();
+      //   window._tempTopBarLogo = null;
+      // }
+      async function saveTopBarLogo(e) {
         e.preventDefault();
         const logoData = window._tempTopBarLogo || ls("topBarLogo");
         if (!logoData) {
           alert("Please select an image first.");
           return;
         }
+        const ok = await setAppSetting("topBarLogo", logoData);
+        if (!ok) {
+          alert("❌ Failed to save logo. Check your connection and try again.");
+          return;
+        }
         ls("topBarLogo", logoData);
         document.getElementById("topBarLogoStatus").innerHTML =
-          `<div style="color:var(--success);font-weight:600;">✅ Top bar logo saved!</div>`;
+          `<div style="color:var(--success);font-weight:600;">✅ Top bar logo saved (synced to all devices)!</div>`;
         loadTopBarLogoPreview();
         renderTopBarLogo();
         window._tempTopBarLogo = null;
       }
 
-      function removeTopBarLogo() {
+      // function removeTopBarLogo() {
+      //   if (!confirm("Remove the top bar logo?")) return;
+      //   ls("topBarLogo", null);
+      //   loadTopBarLogoPreview();
+      //   renderTopBarLogo();
+      //   document.getElementById("topBarLogoStatus").innerHTML =
+      //     `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed.</div>`;
+      //   document.getElementById("topBarLogoInput").value = "";
+      //   window._tempTopBarLogo = null;
+      // }
+
+      async function removeTopBarLogo() {
         if (!confirm("Remove the top bar logo?")) return;
+        await setAppSetting("topBarLogo", null);
         ls("topBarLogo", null);
         loadTopBarLogoPreview();
         renderTopBarLogo();
         document.getElementById("topBarLogoStatus").innerHTML =
-          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed.</div>`;
+          `<div style="color:var(--danger);font-weight:600;">🗑️ Logo removed (synced to all devices).</div>`;
         document.getElementById("topBarLogoInput").value = "";
         window._tempTopBarLogo = null;
       }
@@ -13894,29 +14350,74 @@ ANSWER: B"
         openTestQuestionPanel(data.id);
       }
 
-      function toggleTestStatus(id) {
+      // function toggleTestStatus(id) {
+      //   const tests = ls("tests") || [];
+      //   const idx = tests.findIndex((t) => t.id === id);
+      //   if (idx < 0) return;
+      //   const cycle = {
+      //     Upcoming: "Active",
+      //     Active: "Completed",
+      //     Completed: "Upcoming",
+      //   };
+      //   tests[idx].status = cycle[tests[idx].status] || "Upcoming";
+      //   ls("tests", tests);
+      //   renderTestsTable();
+      // }
+      async function toggleTestStatus(id) {
         const tests = ls("tests") || [];
-        const idx = tests.findIndex((t) => t.id === id);
-        if (idx < 0) return;
+        const test = tests.find((t) => t.id === id);
+        if (!test) return;
+
         const cycle = {
           Upcoming: "Active",
           Active: "Completed",
           Completed: "Upcoming",
         };
-        tests[idx].status = cycle[tests[idx].status] || "Upcoming";
-        ls("tests", tests);
+        const newStatus = cycle[test.status] || "Upcoming";
+
+        const { error } = await supabaseClient
+          .from("tests")
+          .update({ status: newStatus })
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to update status: " + error.message);
+          return;
+        }
+
+        await syncTestsFromSupabase();
         renderTestsTable();
       }
 
-      function deleteTest(id) {
+      // function deleteTest(id) {
+      //   if (!confirm("Delete this test and all its questions?")) return;
+      //   ls(
+      //     "tests",
+      //     (ls("tests") || []).filter((t) => t.id !== id),
+      //   );
+      //   const tq = ls("testQuestions") || {};
+      //   delete tq[id];
+      //   ls("testQuestions", tq);
+      //   closeTestQuestionPanel();
+      //   renderTestsTable();
+      // }
+      async function deleteTest(id) {
         if (!confirm("Delete this test and all its questions?")) return;
-        ls(
-          "tests",
-          (ls("tests") || []).filter((t) => t.id !== id),
-        );
-        const tq = ls("testQuestions") || {};
-        delete tq[id];
-        ls("testQuestions", tq);
+
+        // Delete questions first (FK constraint)
+        await supabaseClient.from("test_questions").delete().eq("test_id", id);
+
+        const { error } = await supabaseClient
+          .from("tests")
+          .delete()
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to delete test: " + error.message);
+          return;
+        }
+
+        await syncTestsFromSupabase();
         closeTestQuestionPanel();
         renderTestsTable();
       }
@@ -13956,7 +14457,45 @@ ANSWER: B"
         document.getElementById("tqText").focus();
       }
 
-      function saveTestQuestion() {
+      // function saveTestQuestion() {
+      //   const text = document.getElementById("tqText").value.trim();
+      //   const a = document.getElementById("tqA").value.trim();
+      //   const b = document.getElementById("tqB").value.trim();
+      //   const c = document.getElementById("tqC").value.trim();
+      //   const d = document.getElementById("tqD").value.trim();
+      //   if (!text || !a || !b || !c || !d) {
+      //     alert("Please fill in the question and all four options.");
+      //     return;
+      //   }
+      //   const tq = ls("testQuestions") || {};
+      //   if (!tq[activeTestId]) tq[activeTestId] = [];
+      //   tq[activeTestId].push({
+      //     id: "TQ" + Date.now(),
+      //     question: text,
+      //     options: [a, b, c, d],
+      //     correct: parseInt(document.getElementById("tqCorrect").value),
+      //     marks: parseInt(document.getElementById("tqMarks").value) || 1,
+      //     explanation: document.getElementById("tqExplain").value.trim(),
+      //   });
+      //   ls("testQuestions", tq);
+      //   const tests = ls("tests") || [];
+      //   const idx = tests.findIndex((t) => t.id === activeTestId);
+      //   if (idx >= 0) {
+      //     tests[idx].totalMarks = tq[activeTestId].reduce(
+      //       (s, q) => s + (q.marks || 1),
+      //       0,
+      //     );
+      //     ls("tests", tests);
+      //   }
+      //   document.getElementById("addTestQuestionForm").style.display = "none";
+      //   renderTestQuestionsList(activeTestId);
+      //   renderTestsTable();
+      //   setTimeout(() => {
+      //     if (window.MathJax)
+      //       MathJax.typesetPromise && MathJax.typesetPromise();
+      //   }, 300);
+      // }
+      async function saveTestQuestion() {
         const text = document.getElementById("tqText").value.trim();
         const a = document.getElementById("tqA").value.trim();
         const b = document.getElementById("tqB").value.trim();
@@ -13966,26 +14505,50 @@ ANSWER: B"
           alert("Please fill in the question and all four options.");
           return;
         }
+        const correctIdx = parseInt(document.getElementById("tqCorrect").value);
+        const correctAnswer = [a, b, c, d][correctIdx];
+        const marks = parseInt(document.getElementById("tqMarks").value) || 1;
+        const explanation = document.getElementById("tqExplain").value.trim();
+
+        // Get current test to find next order_index
         const tq = ls("testQuestions") || {};
-        if (!tq[activeTestId]) tq[activeTestId] = [];
-        tq[activeTestId].push({
-          id: "TQ" + Date.now(),
-          question: text,
-          options: [a, b, c, d],
-          correct: parseInt(document.getElementById("tqCorrect").value),
-          marks: parseInt(document.getElementById("tqMarks").value) || 1,
-          explanation: document.getElementById("tqExplain").value.trim(),
-        });
-        ls("testQuestions", tq);
+        const existing = tq[activeTestId] || [];
+        const nextIndex = existing.length + 1;
+
+        const { data, error } = await supabaseClient
+          .from("test_questions")
+          .insert({
+            test_id: activeTestId,
+            question_text: text,
+            options: [a, b, c, d],
+            correct_answer: correctAnswer,
+            marks: marks,
+            explanation: explanation,
+            order_index: nextIndex,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          alert("❌ Failed to save question: " + error.message);
+          return;
+        }
+
+        // Update running total on the test row
         const tests = ls("tests") || [];
         const idx = tests.findIndex((t) => t.id === activeTestId);
         if (idx >= 0) {
-          tests[idx].totalMarks = tq[activeTestId].reduce(
-            (s, q) => s + (q.marks || 1),
-            0,
-          );
-          ls("tests", tests);
+          const newTotal = (tests[idx].totalMarks || 0) + marks;
+          await supabaseClient
+            .from("tests")
+            .update({ total_marks: newTotal })
+            .eq("id", activeTestId);
         }
+
+        // Refresh local cache
+        await syncTestQuestionsFromSupabase(activeTestId);
+        await syncTestsFromSupabase();
+
         document.getElementById("addTestQuestionForm").style.display = "none";
         renderTestQuestionsList(activeTestId);
         renderTestsTable();
@@ -14041,20 +14604,47 @@ ANSWER: B"
         }, 200);
       }
 
-      function deleteTestQuestion(testId, qId) {
+      // function deleteTestQuestion(testId, qId) {
+      //   if (!confirm("Delete this question?")) return;
+      //   const tq = ls("testQuestions") || {};
+      //   if (tq[testId]) tq[testId] = tq[testId].filter((q) => q.id !== qId);
+      //   ls("testQuestions", tq);
+      //   const tests = ls("tests") || [];
+      //   const idx = tests.findIndex((t) => t.id === testId);
+      //   if (idx >= 0) {
+      //     tests[idx].totalMarks = (tq[testId] || []).reduce(
+      //       (s, q) => s + (q.marks || 1),
+      //       0,
+      //     );
+      //     ls("tests", tests);
+      //   }
+      //   renderTestQuestionsList(testId);
+      //   renderTestsTable();
+      // }
+      async function deleteTestQuestion(testId, qId) {
         if (!confirm("Delete this question?")) return;
-        const tq = ls("testQuestions") || {};
-        if (tq[testId]) tq[testId] = tq[testId].filter((q) => q.id !== qId);
-        ls("testQuestions", tq);
-        const tests = ls("tests") || [];
-        const idx = tests.findIndex((t) => t.id === testId);
-        if (idx >= 0) {
-          tests[idx].totalMarks = (tq[testId] || []).reduce(
-            (s, q) => s + (q.marks || 1),
-            0,
-          );
-          ls("tests", tests);
+
+        const { error } = await supabaseClient
+          .from("test_questions")
+          .delete()
+          .eq("id", qId);
+
+        if (error) {
+          alert("❌ Failed to delete: " + error.message);
+          return;
         }
+
+        // Recalculate total marks on test
+        await syncTestQuestionsFromSupabase(testId);
+        const tq = ls("testQuestions") || {};
+        const remaining = tq[testId] || [];
+        const newTotal = remaining.reduce((s, q) => s + (q.marks || 1), 0);
+        await supabaseClient
+          .from("tests")
+          .update({ total_marks: newTotal })
+          .eq("id", testId);
+
+        await syncTestsFromSupabase();
         renderTestQuestionsList(testId);
         renderTestsTable();
       }
@@ -14523,19 +15113,51 @@ ANSWER: B"
         });
       }
 
-      function postTestResults() {
+      // function postTestResults() {
+      //   if (!activeTestId) return;
+      //   const tests = ls("tests") || [];
+      //   const idx = tests.findIndex((t) => t.id === activeTestId);
+      //   if (idx < 0) return;
+      //   tests[idx].resultsPosted = true;
+      //   tests[idx].status = "Completed";
+      //   ls("tests", tests);
+      //   const testResults = ls("testResults") || [];
+      //   testResults.forEach((r, i) => {
+      //     if (r.testId === activeTestId) testResults[i].posted = true;
+      //   });
+      //   ls("testResults", testResults);
+      //   alert(
+      //     "✅ Results posted! Students can now see their score, grade, and full answer review.",
+      //   );
+      //   renderTestsTable();
+      //   openGradingPanel(activeTestId);
+      // }
+      async function postTestResults() {
         if (!activeTestId) return;
-        const tests = ls("tests") || [];
-        const idx = tests.findIndex((t) => t.id === activeTestId);
-        if (idx < 0) return;
-        tests[idx].resultsPosted = true;
-        tests[idx].status = "Completed";
-        ls("tests", tests);
-        const testResults = ls("testResults") || [];
-        testResults.forEach((r, i) => {
-          if (r.testId === activeTestId) testResults[i].posted = true;
-        });
-        ls("testResults", testResults);
+
+        const { error: testError } = await supabaseClient
+          .from("tests")
+          .update({ results_posted: true, status: "Completed" })
+          .eq("id", activeTestId);
+
+        if (testError) {
+          alert("❌ Failed to post results: " + testError.message);
+          return;
+        }
+
+        const { error: resultsError } = await supabaseClient
+          .from("test_results")
+          .update({ posted: true })
+          .eq("test_id", activeTestId);
+
+        if (resultsError) {
+          alert("❌ Failed to flag results as posted: " + resultsError.message);
+          return;
+        }
+
+        await syncTestsFromSupabase();
+        await syncTestResultsFromSupabase();
+
         alert(
           "✅ Results posted! Students can now see their score, grade, and full answer review.",
         );
@@ -14910,6 +15532,7 @@ ANSWER: B"
       });
       // =================== STUDENT DASHBOARD ===================
       function loadStudentDashboard() {
+        syncAppSettingsFromSupabase().then(() => renderTopBarLogo());
         const s = ls("currentStudent");
         renderTopBarLogo();
         if (!s) {
@@ -15212,8 +15835,13 @@ ANSWER: B"
         renderStudentAssessments(ls("currentStudent"));
       }
 
-      function renderStudentTests(s) {
+      // function renderStudentTests(s) {
+      //   if (!s) return;
+      async function renderStudentTests(s) {
         if (!s) return;
+        await syncTestsFromSupabase();
+        await syncAllTestQuestionsFromSupabase();
+        await syncTestResultsFromSupabase();
         const tests = ls("tests") || [];
         const myDeptTests = tests.filter(
           (t) =>
@@ -15386,8 +16014,13 @@ ANSWER: B"
       }
 
       // ---- Assessments: identical design/engine to Tests, but no clock-in or time-window gating ----
-      function renderStudentAssessments(s) {
+      // function renderStudentAssessments(s) {
+      //   if (!s) return;
+      async function renderStudentAssessments(s) {
         if (!s) return;
+        await syncTestsFromSupabase();
+        await syncAllTestQuestionsFromSupabase();
+        await syncTestResultsFromSupabase();
         const tests = ls("tests") || [];
         const myDeptTests = tests.filter(
           (t) =>
@@ -15534,7 +16167,9 @@ ANSWER: B"
           .join("");
       }
 
-      function renderPostedResults(s) {
+      // function renderPostedResults(s) {
+      async function renderPostedResults(s) {
+        await syncTestResultsFromSupabase();
         const testResults = ls("testResults") || [];
         const myPosted = testResults.filter(
           (r) => r.regNo === s.regNo && r.posted === true,
@@ -16587,7 +17222,7 @@ ANSWER: B"
         }
       }
 
-      function submitTest(autoSubmit = false) {
+      async function submitTest(autoSubmit = false) {
         if (
           !autoSubmit &&
           !confirm(
@@ -16628,6 +17263,24 @@ ANSWER: B"
                   : "F";
         const timeTaken = Math.round((Date.now() - startTime) / 1000);
         const s = ls("currentStudent");
+        // const testResults = ls("testResults") || [];
+        // testResults.push({
+        //   id: "TR" + Date.now(),
+        //   testId,
+        //   testName: test.name,
+        //   subject: test.subject,
+        //   regNo: s.regNo,
+        //   studentName: s.fullName,
+        //   score,
+        //   totalMarks,
+        //   percentage: pct,
+        //   grade,
+        //   timeTaken,
+        //   date: fmtDate(new Date()),
+        //   review,
+        //   posted: false,
+        // });
+        // ls("testResults", testResults);
         const testResults = ls("testResults") || [];
         testResults.push({
           id: "TR" + Date.now(),
@@ -16646,6 +17299,29 @@ ANSWER: B"
           posted: false,
         });
         ls("testResults", testResults);
+
+        // Push to Supabase so admin sees it cross-device
+        const { error: insertError } = await supabaseClient
+          .from("test_results")
+          .insert({
+            test_id: testId,
+            student_id: s.id,
+            test_name: test.name,
+            subject: test.subject,
+            score: score,
+            total_marks: totalMarks,
+            percentage: pct,
+            grade: grade,
+            time_taken: timeTaken,
+            date: fmtDate(new Date()),
+            posted: false,
+            review: review,
+          });
+
+        if (insertError) {
+          console.error("Failed to push test result to Supabase:", insertError);
+          // Don't block the student — local copy still exists for them
+        }
         const students = ls("students") || [];
         const si = students.findIndex((st) => st.regNo === s.regNo);
         if (si >= 0) {
@@ -16957,6 +17633,7 @@ ANSWER: B"
       }
 
       function loadStaffDashboard() {
+        syncAppSettingsFromSupabase().then(() => renderTopBarLogo());
         const staff = getCurrentStaff();
         if (!staff) return;
         document.getElementById("staffWelcomeName").textContent =
@@ -17489,7 +18166,66 @@ ANSWER: B"
         wrap.style.display = "block";
       }
 
-      function staffSubmitEditRequest(e) {
+      // function staffSubmitEditRequest(e) {
+      //   e.preventDefault();
+      //   const staff = getCurrentStaff();
+      //   if (!staff) return;
+      //   const id = document.getElementById("sfEditStudentSelect").value;
+      //   if (!id) {
+      //     alert("Select a student first.");
+      //     return;
+      //   }
+      //   const s = (ls("students") || []).find((st) => st.id === id);
+      //   if (!s) return;
+      //   const changes = {};
+      //   const fields = [
+      //     ["firstName", "seFirstName"],
+      //     ["lastName", "seLastName"],
+      //     ["phone", "sePhone"],
+      //     ["address", "seAddress"],
+      //     ["guardianName", "seGuardianName"],
+      //     ["guardianPhone", "seGuardianPhone"],
+      //   ];
+      //   fields.forEach(([field, elId]) => {
+      //     const val = document.getElementById(elId).value.trim();
+      //     if (val && val !== (s[field] || "")) changes[field] = val;
+      //   });
+      //   if (Object.keys(changes).length === 0) {
+      //     alert("No changes detected.");
+      //     return;
+      //   }
+      //   const reason = document.getElementById("seReason").value.trim();
+      //   const edits = ls("pendingEdits") || [];
+      //   const editRecord = {
+      //     id: "EDT" + Date.now(),
+      //     studentId: id,
+      //     studentName: s.fullName,
+      //     regNo: s.regNo,
+      //     branch: staff.branch,
+      //     staffId: staff.id,
+      //     staffName: staff.name,
+      //     changes: changes,
+      //     reason: reason,
+      //     status: "pending",
+      //     timestamp: new Date().toISOString(),
+      //   };
+      //   edits.push(editRecord);
+      //   ls("pendingEdits", edits);
+      //   logActivity(
+      //     staff,
+      //     "edit_request",
+      //     `Requested profile edit for ${s.fullName} (${s.regNo})`,
+      //     "pending",
+      //     {
+      //       editId: editRecord.id,
+      //     },
+      //   );
+      //   alert("✅ Edit request submitted for admin approval.");
+      //   document.getElementById("sfEditStudentSelect").value = "";
+      //   document.getElementById("staffEditFormWrap").style.display = "none";
+      //   showStaff("dashboard");
+      // }
+      async function staffSubmitEditRequest(e) {
         e.preventDefault();
         const staff = getCurrentStaff();
         if (!staff) return;
@@ -17500,6 +18236,7 @@ ANSWER: B"
         }
         const s = (ls("students") || []).find((st) => st.id === id);
         if (!s) return;
+
         const changes = {};
         const fields = [
           ["firstName", "seFirstName"],
@@ -17513,37 +18250,46 @@ ANSWER: B"
           const val = document.getElementById(elId).value.trim();
           if (val && val !== (s[field] || "")) changes[field] = val;
         });
+
         if (Object.keys(changes).length === 0) {
           alert("No changes detected.");
           return;
         }
+
         const reason = document.getElementById("seReason").value.trim();
-        const edits = ls("pendingEdits") || [];
-        const editRecord = {
-          id: "EDT" + Date.now(),
-          studentId: id,
-          studentName: s.fullName,
-          regNo: s.regNo,
-          branch: staff.branch,
-          staffId: staff.id,
-          staffName: staff.name,
-          changes: changes,
-          reason: reason,
+
+        const { error } = await supabaseClient.from("pending_edits").insert({
+          entity_type: "student",
+          entity_id: id,
+          requested_by: staff.id,
           status: "pending",
-          timestamp: new Date().toISOString(),
-        };
-        edits.push(editRecord);
-        ls("pendingEdits", edits);
+          payload: {
+            studentName: s.fullName,
+            regNo: s.regNo,
+            branch: staff.branch,
+            staffName: staff.name,
+            changes: changes,
+            reason: reason,
+          },
+        });
+
+        if (error) {
+          alert("❌ Failed to submit edit request: " + error.message);
+          return;
+        }
+
+        await syncPendingEditsFromSupabase();
         logActivity(
           staff,
           "edit_request",
           `Requested profile edit for ${s.fullName} (${s.regNo})`,
           "pending",
-          {
-            editId: editRecord.id,
-          },
+          { editId: "pending" }, // activity log meta — no local edit id anymore
         );
-        alert("✅ Edit request submitted for admin approval.");
+
+        alert(
+          "✅ Edit request submitted for admin approval (synced to all devices).",
+        );
         document.getElementById("sfEditStudentSelect").value = "";
         document.getElementById("staffEditFormWrap").style.display = "none";
         showStaff("dashboard");
@@ -18307,7 +19053,9 @@ ANSWER: B"
       }
 
       // =================== ADMIN: APPROVALS ===================
-      function renderApprovals() {
+      // function renderApprovals() {
+      async function renderApprovals() {
+        await syncPendingEditsFromSupabase();
         const students = ls("students") || [];
         const payments = ls("payments") || [];
         const edits = ls("pendingEdits") || [];
@@ -18407,168 +19155,409 @@ ANSWER: B"
         updateApprovalsBadge();
       }
 
-      function approveStudentReg(id) {
-        const students = ls("students") || [];
-        const idx = students.findIndex((s) => s.id === id);
-        if (idx < 0) return;
-        students[idx].approvalStatus = "approved";
-        ls("students", students);
+      // function approveStudentReg(id) {
+      //   const students = ls("students") || [];
+      //   const idx = students.findIndex((s) => s.id === id);
+      //   if (idx < 0) return;
+      //   students[idx].approvalStatus = "approved";
+      //   ls("students", students);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "student_add" &&
+      //         a.meta &&
+      //         a.meta.studentId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "approved";
+      //     ls("activityLog", log);
+      //   }
+      //   alert(
+      //     "✅ " +
+      //       students[idx].fullName +
+      //       " approved. The student can now log in.",
+      //   );
+      //   renderApprovals();
+      //   renderStudentsTable();
+      //   renderAdminStats();
+      //   updateAlertBadges();
+      // }
+
+      async function approveStudentReg(id) {
+        const { error } = await supabaseClient
+          .from("students")
+          .update({ approval_status: "approved" })
+          .eq("id", id);
+        if (error) {
+          alert("❌ Failed to approve: " + error.message);
+          return;
+        }
+        // Update activity log if there's a matching entry
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
           .find(
             (a) =>
               a.type === "student_add" &&
-              a.meta &&
-              a.meta.studentId === id &&
+              a.meta?.studentId === id &&
               a.status === "pending",
           );
         if (entry) {
-          entry.status = "approved";
-          ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "approved" })
+            .eq("id", entry.id);
         }
-        alert(
-          "✅ " +
-            students[idx].fullName +
-            " approved. The student can now log in.",
-        );
+        await syncStudentsFromSupabase();
+        await syncActivityLogFromSupabase();
+        alert("✅ Student approved. They can now log in.");
         renderApprovals();
         renderStudentsTable();
         renderAdminStats();
-        updateAlertBadges();
       }
 
-      function rejectStudentReg(id) {
+      // function rejectStudentReg(id) {
+      //   if (!confirm("Reject this student registration?")) return;
+      //   const students = ls("students") || [];
+      //   const idx = students.findIndex((s) => s.id === id);
+      //   if (idx < 0) return;
+      //   students[idx].approvalStatus = "rejected";
+      //   ls("students", students);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "student_add" &&
+      //         a.meta &&
+      //         a.meta.studentId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "rejected";
+      //     ls("activityLog", log);
+      //   }
+      //   renderApprovals();
+      //   renderStudentsTable();
+      // }
+      async function rejectStudentReg(id) {
         if (!confirm("Reject this student registration?")) return;
-        const students = ls("students") || [];
-        const idx = students.findIndex((s) => s.id === id);
-        if (idx < 0) return;
-        students[idx].approvalStatus = "rejected";
-        ls("students", students);
+        const { error } = await supabaseClient
+          .from("students")
+          .update({ approval_status: "rejected" })
+          .eq("id", id);
+        if (error) {
+          alert("❌ Failed to reject: " + error.message);
+          return;
+        }
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
           .find(
             (a) =>
               a.type === "student_add" &&
-              a.meta &&
-              a.meta.studentId === id &&
+              a.meta?.studentId === id &&
               a.status === "pending",
           );
         if (entry) {
-          entry.status = "rejected";
-          ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "rejected" })
+            .eq("id", entry.id);
         }
+        await syncStudentsFromSupabase();
+        await syncActivityLogFromSupabase();
         renderApprovals();
         renderStudentsTable();
       }
 
-      function approvePaymentReq(id) {
+      // function approvePaymentReq(id) {
+      //   const payments = ls("payments") || [];
+      //   const idx = payments.findIndex((p) => p.id === id);
+      //   if (idx < 0) return;
+      //   const p = payments[idx];
+      //   const students = ls("students") || [];
+      //   const sIdx = students.findIndex((s) => s.regNo === p.regNo);
+      //   if (sIdx < 0) {
+      //     alert("Student not found — cannot approve.");
+      //     return;
+      //   }
+      //   if (!students[sIdx].paymentPlan) {
+      //     students[sIdx].paymentPlan = "full";
+      //   }
+      //   students[sIdx].amountPaid =
+      //     (students[sIdx].amountPaid || 0) + (p.amount || 0);
+      //   if (!students[sIdx].paymentHistory) students[sIdx].paymentHistory = [];
+      //   students[sIdx].paymentHistory.push({
+      //     date: p.date,
+      //     amount: p.amount,
+      //     note:
+      //       "Payment approved (submitted by " +
+      //       (p.submittedByName || "staff") +
+      //       ")",
+      //   });
+      //   if (!students[sIdx].paymentDate) students[sIdx].paymentDate = p.date;
+      //   ls("students", students);
+      //   payments[idx].approvalStatus = "approved";
+      //   payments[idx].status = "Paid";
+      //   ls("payments", payments);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "payment" &&
+      //         a.meta &&
+      //         a.meta.paymentId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "approved";
+      //     ls("activityLog", log);
+      //   }
+      //   alert(
+      //     "✅ Payment of ₦" +
+      //       (p.amount || 0).toLocaleString() +
+      //       " approved and added to " +
+      //       p.student +
+      //       "'s balance.",
+      //   );
+      //   renderApprovals();
+      //   renderPaymentsSection();
+      //   renderAdminStats();
+      //   updateAlertBadges();
+      // }
+
+      async function approvePaymentReq(id) {
         const payments = ls("payments") || [];
-        const idx = payments.findIndex((p) => p.id === id);
-        if (idx < 0) return;
-        const p = payments[idx];
+        const p = payments.find((x) => x.id === id);
+        if (!p) return;
         const students = ls("students") || [];
-        const sIdx = students.findIndex((s) => s.regNo === p.regNo);
-        if (sIdx < 0) {
+        const student = students.find((s) => s.regNo === p.regNo);
+        if (!student) {
           alert("Student not found — cannot approve.");
           return;
         }
-        if (!students[sIdx].paymentPlan) {
-          students[sIdx].paymentPlan = "full";
+
+        // 1. Mark payment as approved
+        const { error: payErr } = await supabaseClient
+          .from("payments")
+          .update({ approval_status: "approved", status: "Paid" })
+          .eq("id", id);
+        if (payErr) {
+          alert("❌ Failed: " + payErr.message);
+          return;
         }
-        students[sIdx].amountPaid =
-          (students[sIdx].amountPaid || 0) + (p.amount || 0);
-        if (!students[sIdx].paymentHistory) students[sIdx].paymentHistory = [];
-        students[sIdx].paymentHistory.push({
+
+        // 2. Add to student's paid amount
+        const newPaid = (student.amountPaid || 0) + (p.amount || 0);
+        const updates = { amount_paid: newPaid };
+        if (!student.paymentDate) updates.payment_date = p.date;
+        if (!student.paymentPlan) updates.payment_plan = "full";
+        const { error: stuErr } = await supabaseClient
+          .from("students")
+          .update(updates)
+          .eq("id", student.id);
+        if (stuErr) {
+          alert(
+            "⚠️ Payment approved but student balance update failed: " +
+              stuErr.message,
+          );
+        }
+
+        // 3. Add a row in payment history
+        await supabaseClient.from("student_payment_history").insert({
+          student_id: student.id,
           date: p.date,
           amount: p.amount,
-          note:
-            "Payment approved (submitted by " +
-            (p.submittedByName || "staff") +
-            ")",
+          note: "Payment approved",
         });
-        if (!students[sIdx].paymentDate) students[sIdx].paymentDate = p.date;
-        ls("students", students);
-        payments[idx].approvalStatus = "approved";
-        payments[idx].status = "Paid";
-        ls("payments", payments);
+
+        // 4. Update activity log
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
           .find(
             (a) =>
               a.type === "payment" &&
-              a.meta &&
-              a.meta.paymentId === id &&
+              a.meta?.paymentId === id &&
               a.status === "pending",
           );
         if (entry) {
-          entry.status = "approved";
-          ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "approved" })
+            .eq("id", entry.id);
         }
-        alert(
-          "✅ Payment of ₦" +
-            (p.amount || 0).toLocaleString() +
-            " approved and added to " +
-            p.student +
-            "'s balance.",
-        );
+
+        await syncStudentsFromSupabase();
+        await syncPaymentsFromSupabase();
+        await syncActivityLogFromSupabase();
+        alert("✅ Payment approved and added to balance.");
         renderApprovals();
         renderPaymentsSection();
         renderAdminStats();
-        updateAlertBadges();
       }
 
-      function rejectPaymentReq(id) {
+      // function rejectPaymentReq(id) {
+      //   if (
+      //     !confirm("Reject this payment? It will not be added to the balance.")
+      //   )
+      //     return;
+      //   const payments = ls("payments") || [];
+      //   const idx = payments.findIndex((p) => p.id === id);
+      //   if (idx < 0) return;
+      //   payments[idx].approvalStatus = "rejected";
+      //   payments[idx].status = "Rejected";
+      //   ls("payments", payments);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "payment" &&
+      //         a.meta &&
+      //         a.meta.paymentId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "rejected";
+      //     ls("activityLog", log);
+      //   }
+      //   renderApprovals();
+      // }
+      async function rejectPaymentReq(id) {
         if (
           !confirm("Reject this payment? It will not be added to the balance.")
         )
           return;
-        const payments = ls("payments") || [];
-        const idx = payments.findIndex((p) => p.id === id);
-        if (idx < 0) return;
-        payments[idx].approvalStatus = "rejected";
-        payments[idx].status = "Rejected";
-        ls("payments", payments);
+        const { error } = await supabaseClient
+          .from("payments")
+          .update({ approval_status: "rejected", status: "Rejected" })
+          .eq("id", id);
+        if (error) {
+          alert("❌ Failed: " + error.message);
+          return;
+        }
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
           .find(
             (a) =>
               a.type === "payment" &&
-              a.meta &&
-              a.meta.paymentId === id &&
+              a.meta?.paymentId === id &&
               a.status === "pending",
           );
         if (entry) {
-          entry.status = "rejected";
-          ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "rejected" })
+            .eq("id", entry.id);
         }
+        await syncPaymentsFromSupabase();
+        await syncActivityLogFromSupabase();
         renderApprovals();
       }
 
-      function approveEditReq(id) {
+      // function approveEditReq(id) {
+      //   const edits = ls("pendingEdits") || [];
+      //   const idx = edits.findIndex((e) => e.id === id);
+      //   if (idx < 0) return;
+      //   const ed = edits[idx];
+      //   const students = ls("students") || [];
+      //   const sIdx = students.findIndex((s) => s.id === ed.studentId);
+      //   if (sIdx < 0) {
+      //     alert("Student not found.");
+      //     return;
+      //   }
+      //   Object.entries(ed.changes).forEach(([field, value]) => {
+      //     students[sIdx][field] = value;
+      //   });
+      //   if (ed.changes.firstName || ed.changes.lastName) {
+      //     students[sIdx].fullName =
+      //       students[sIdx].firstName + " " + students[sIdx].lastName;
+      //   }
+      //   ls("students", students);
+      //   edits[idx].status = "approved";
+      //   ls("pendingEdits", edits);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "edit_request" &&
+      //         a.meta &&
+      //         a.meta.editId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "approved";
+      //     ls("activityLog", log);
+      //   }
+      //   alert("✅ Edit request approved and applied.");
+      //   renderApprovals();
+      //   renderStudentsTable();
+      // }
+      async function approveEditReq(id) {
         const edits = ls("pendingEdits") || [];
-        const idx = edits.findIndex((e) => e.id === id);
-        if (idx < 0) return;
-        const ed = edits[idx];
+        const ed = edits.find((e) => e.id === id);
+        if (!ed) return;
+
         const students = ls("students") || [];
         const sIdx = students.findIndex((s) => s.id === ed.studentId);
         if (sIdx < 0) {
           alert("Student not found.");
           return;
         }
+
+        // Apply changes to student row in Supabase
+        const updates = {};
         Object.entries(ed.changes).forEach(([field, value]) => {
-          students[sIdx][field] = value;
+          const dbField = {
+            firstName: "first_name",
+            lastName: "last_name",
+            phone: "phone",
+            address: "address",
+            guardianName: "guardian_name",
+            guardianPhone: "guardian_phone",
+          }[field];
+          if (dbField) updates[dbField] = value;
         });
+
+        // If first/last name changed, update full_name too
         if (ed.changes.firstName || ed.changes.lastName) {
-          students[sIdx].fullName =
-            students[sIdx].firstName + " " + students[sIdx].lastName;
+          const newFirst = ed.changes.firstName || students[sIdx].firstName;
+          const newLast = ed.changes.lastName || students[sIdx].lastName;
+          updates.full_name = newFirst + " " + newLast;
         }
-        ls("students", students);
-        edits[idx].status = "approved";
-        ls("pendingEdits", edits);
+
+        const { error: studentErr } = await supabaseClient
+          .from("students")
+          .update(updates)
+          .eq("id", ed.studentId);
+
+        if (studentErr) {
+          alert("❌ Failed to apply edit: " + studentErr.message);
+          return;
+        }
+
+        // Mark the pending edit as approved
+        const { error: editErr } = await supabaseClient
+          .from("pending_edits")
+          .update({ status: "approved" })
+          .eq("id", id);
+
+        if (editErr) {
+          alert(
+            "⚠️ Student updated, but edit request status failed: " +
+              editErr.message,
+          );
+        }
+
+        // Update activity log
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
@@ -18582,19 +19571,57 @@ ANSWER: B"
         if (entry) {
           entry.status = "approved";
           ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "approved" })
+            .eq("id", entry.id);
         }
+
+        await syncPendingEditsFromSupabase();
+        await syncStudentsFromSupabase();
+
         alert("✅ Edit request approved and applied.");
         renderApprovals();
         renderStudentsTable();
       }
 
-      function rejectEditReq(id) {
+      // function rejectEditReq(id) {
+      //   if (!confirm("Reject this edit request?")) return;
+      //   const edits = ls("pendingEdits") || [];
+      //   const idx = edits.findIndex((e) => e.id === id);
+      //   if (idx < 0) return;
+      //   edits[idx].status = "rejected";
+      //   ls("pendingEdits", edits);
+      //   const log = ls("activityLog") || [];
+      //   const entry = [...log]
+      //     .reverse()
+      //     .find(
+      //       (a) =>
+      //         a.type === "edit_request" &&
+      //         a.meta &&
+      //         a.meta.editId === id &&
+      //         a.status === "pending",
+      //     );
+      //   if (entry) {
+      //     entry.status = "rejected";
+      //     ls("activityLog", log);
+      //   }
+      //   renderApprovals();
+      // }
+
+      async function rejectEditReq(id) {
         if (!confirm("Reject this edit request?")) return;
-        const edits = ls("pendingEdits") || [];
-        const idx = edits.findIndex((e) => e.id === id);
-        if (idx < 0) return;
-        edits[idx].status = "rejected";
-        ls("pendingEdits", edits);
+
+        const { error } = await supabaseClient
+          .from("pending_edits")
+          .update({ status: "rejected" })
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to reject: " + error.message);
+          return;
+        }
+
         const log = ls("activityLog") || [];
         const entry = [...log]
           .reverse()
@@ -18608,7 +19635,13 @@ ANSWER: B"
         if (entry) {
           entry.status = "rejected";
           ls("activityLog", log);
+          await supabaseClient
+            .from("activity_log")
+            .update({ status: "rejected" })
+            .eq("id", entry.id);
         }
+
+        await syncPendingEditsFromSupabase();
         renderApprovals();
       }
 
@@ -18905,14 +19938,29 @@ ANSWER: B"
         switchWGAdminTab(wgAdminTab);
       }
 
-      function saveWGContent() {
+      // function saveWGContent() {
+      //   const s = getWGSettings();
+      //   s.heading =
+      //     document.getElementById("wgHeadingInput").value.trim() ||
+      //     getWGDefaults().heading;
+      //   s.welcomeNote = document.getElementById("wgWelcomeNoteInput").value;
+      //   ls("welcomeGateSettings", s);
+      //   alert("✅ Welcome content saved.");
+      //   renderWelcomeGateLive();
+      // }
+      async function saveWGContent() {
         const s = getWGSettings();
         s.heading =
           document.getElementById("wgHeadingInput").value.trim() ||
           getWGDefaults().heading;
         s.welcomeNote = document.getElementById("wgWelcomeNoteInput").value;
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save. Check your connection and try again.");
+          return;
+        }
         ls("welcomeGateSettings", s);
-        alert("✅ Welcome content saved.");
+        alert("✅ Welcome content saved (synced to all devices).");
         renderWelcomeGateLive();
       }
 
@@ -18944,7 +19992,31 @@ ANSWER: B"
         ).value = "";
       }
 
-      function saveWGPerson(who) {
+      // function saveWGPerson(who) {
+      //   const s = getWGSettings();
+      //   if (who === "md") {
+      //     s.mdName = document.getElementById("wgMDNameInput").value.trim();
+      //     s.mdMessage = document.getElementById("wgMDMessageInput").value;
+      //     if (wgPersonPhotoTemp.md !== undefined)
+      //       s.mdPhoto = wgPersonPhotoTemp.md;
+      //   } else {
+      //     s.adminName = document
+      //       .getElementById("wgAdminNameInput")
+      //       .value.trim();
+      //     s.adminMessage = document.getElementById("wgAdminMessageInput").value;
+      //     if (wgPersonPhotoTemp.admin !== undefined)
+      //       s.adminPhoto = wgPersonPhotoTemp.admin;
+      //   }
+      //   ls("welcomeGateSettings", s);
+      //   wgPersonPhotoTemp[who] = undefined;
+      //   alert(
+      //     "✅ " +
+      //       (who === "md" ? "Managing Director" : "Administrator") +
+      //       " section saved.",
+      //   );
+      //   renderWelcomeGateLive();
+      // }
+      async function saveWGPerson(who) {
         const s = getWGSettings();
         if (who === "md") {
           s.mdName = document.getElementById("wgMDNameInput").value.trim();
@@ -18959,12 +20031,17 @@ ANSWER: B"
           if (wgPersonPhotoTemp.admin !== undefined)
             s.adminPhoto = wgPersonPhotoTemp.admin;
         }
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save. Check your connection and try again.");
+          return;
+        }
         ls("welcomeGateSettings", s);
         wgPersonPhotoTemp[who] = undefined;
         alert(
           "✅ " +
             (who === "md" ? "Managing Director" : "Administrator") +
-            " section saved.",
+            " section saved (synced to all devices).",
         );
         renderWelcomeGateLive();
       }
@@ -18991,40 +20068,93 @@ ANSWER: B"
           .join("");
       }
 
-      function wgAddRule(e) {
+      // function wgAddRule(e) {
+      //   e.preventDefault();
+      //   const input = document.getElementById("wgNewRuleInput");
+      //   const text = input.value.trim();
+      //   if (!text) return;
+      //   const s = getWGSettings();
+      //   s.rules.push(text);
+      //   ls("welcomeGateSettings", s);
+      //   input.value = "";
+      //   renderWGRulesAdminList();
+      //   renderWelcomeGateLive();
+      // }
+      async function wgAddRule(e) {
         e.preventDefault();
         const input = document.getElementById("wgNewRuleInput");
         const text = input.value.trim();
         if (!text) return;
         const s = getWGSettings();
         s.rules.push(text);
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save rule. Check your connection.");
+          return;
+        }
         ls("welcomeGateSettings", s);
         input.value = "";
         renderWGRulesAdminList();
         renderWelcomeGateLive();
       }
 
-      function wgEditRule(i, value) {
+      // function wgEditRule(i, value) {
+      //   const s = getWGSettings();
+      //   s.rules[i] = value;
+      //   ls("welcomeGateSettings", s);
+      //   renderWelcomeGateLive();
+      // }
+      async function wgEditRule(i, value) {
         const s = getWGSettings();
         s.rules[i] = value;
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save edit. Check your connection.");
+          return;
+        }
         ls("welcomeGateSettings", s);
         renderWelcomeGateLive();
       }
 
-      function wgDeleteRule(i) {
+      // function wgDeleteRule(i) {
+      //   if (!confirm("Delete this rule?")) return;
+      //   const s = getWGSettings();
+      //   s.rules.splice(i, 1);
+      //   ls("welcomeGateSettings", s);
+      //   renderWGRulesAdminList();
+      //   renderWelcomeGateLive();
+      // }
+      async function wgDeleteRule(i) {
         if (!confirm("Delete this rule?")) return;
         const s = getWGSettings();
         s.rules.splice(i, 1);
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to delete rule. Check your connection.");
+          return;
+        }
         ls("welcomeGateSettings", s);
         renderWGRulesAdminList();
         renderWelcomeGateLive();
       }
 
-      function wgMoveRule(i, direction) {
+      // function wgMoveRule(i, direction) {
+      //   const s = getWGSettings();
+      //   const target = i + direction;
+      //   if (target < 0 || target >= s.rules.length) return;
+      //   [s.rules[i], s.rules[target]] = [s.rules[target], s.rules[i]];
+      //   ls("welcomeGateSettings", s);
+      //   renderWGRulesAdminList();
+      //   renderWelcomeGateLive();
+      // }
+
+      async function wgMoveRule(i, direction) {
         const s = getWGSettings();
         const target = i + direction;
         if (target < 0 || target >= s.rules.length) return;
         [s.rules[i], s.rules[target]] = [s.rules[target], s.rules[i]];
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) return;
         ls("welcomeGateSettings", s);
         renderWGRulesAdminList();
         renderWelcomeGateLive();
@@ -19050,7 +20180,33 @@ ANSWER: B"
         document.getElementById("wgWatermarkInput").value = "";
       }
 
-      function saveWGWatermark() {
+      // function saveWGWatermark() {
+      //   const s = getWGSettings();
+      //   s.watermark.enabled =
+      //     document.getElementById("wgWatermarkEnabled").checked;
+      //   s.watermark.opacity = parseInt(
+      //     document.getElementById("wgWatermarkOpacity").value,
+      //   );
+      //   s.watermark.size = parseInt(
+      //     document.getElementById("wgWatermarkSize").value,
+      //   );
+      //   s.watermark.position = document.getElementById(
+      //     "wgWatermarkPosition",
+      //   ).value;
+      //   s.watermark.scope = document.getElementById("wgWatermarkScope").value;
+      //   if (wgWatermarkTemp !== undefined) s.watermark.image = wgWatermarkTemp;
+      //   if (s.watermark.enabled && !s.watermark.image) {
+      //     alert(
+      //       'Please upload a watermark image first, or leave "Enable watermark" unchecked.',
+      //     );
+      //     return;
+      //   }
+      //   ls("welcomeGateSettings", s);
+      //   wgWatermarkTemp = undefined;
+      //   alert("✅ Watermark settings saved.");
+      //   renderWelcomeGateLive();
+      // }
+      async function saveWGWatermark() {
         const s = getWGSettings();
         s.watermark.enabled =
           document.getElementById("wgWatermarkEnabled").checked;
@@ -19071,23 +20227,112 @@ ANSWER: B"
           );
           return;
         }
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save. Check your connection and try again.");
+          return;
+        }
         ls("welcomeGateSettings", s);
         wgWatermarkTemp = undefined;
-        alert("✅ Watermark settings saved.");
+        alert("✅ Watermark settings saved (synced to all devices).");
         renderWelcomeGateLive();
       }
 
-      function saveWGDisplay() {
+      // function saveWGDisplay() {
+      //   const s = getWGSettings();
+      //   s.displayMode = document.getElementById("wgDisplayMode").value;
+      //   s.requireAgree = document.getElementById("wgRequireAgree").checked;
+      //   ls("welcomeGateSettings", s);
+      //   alert("✅ Display settings saved.");
+      // }
+
+      async function saveWGDisplay() {
         const s = getWGSettings();
         s.displayMode = document.getElementById("wgDisplayMode").value;
         s.requireAgree = document.getElementById("wgRequireAgree").checked;
+        const ok = await setAppSetting("welcomeGateSettings", s);
+        if (!ok) {
+          alert("❌ Failed to save. Check your connection and try again.");
+          return;
+        }
         ls("welcomeGateSettings", s);
-        alert("✅ Display settings saved.");
+        alert("✅ Display settings saved (synced to all devices).");
+      }
+
+      //
+
+      // =================== APP SETTINGS (Supabase-backed key-value) ===================
+      async function getAppSetting(key, fallback = null) {
+        const { data, error } = await supabaseClient
+          .from("app_settings")
+          .select("value")
+          .eq("key", key)
+          .maybeSingle();
+        if (error || !data) return fallback;
+        return data.value;
+      }
+
+      async function setAppSetting(key, value) {
+        const { error } = await supabaseClient
+          .from("app_settings")
+          .upsert({ key, value }, { onConflict: "key" });
+        if (error) {
+          console.error("setAppSetting failed:", error);
+          return false;
+        }
+        return true;
+      }
+
+      // Loads every app_setting row into a single in-memory cache, and mirrors the
+      // ones we care about into localStorage so existing code keeps working while we migrate.
+      async function syncAppSettingsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("app_settings")
+          .select("*");
+        if (error) {
+          console.error("syncAppSettings failed:", error);
+          return;
+        }
+        const rows = data || [];
+        const map = {};
+        rows.forEach((r) => {
+          map[r.key] = r.value;
+        });
+
+        // Mirror the known keys into localStorage (the keys old code reads)
+        if (map["idCardLogo"] !== undefined)
+          ls("idCardLogo", map["idCardLogo"]);
+        if (map["idCardHeaderLogo"] !== undefined)
+          ls("idCardHeaderLogo", map["idCardHeaderLogo"]);
+        if (map["topBarLogo"] !== undefined)
+          ls("topBarLogo", map["topBarLogo"]);
+        if (map["welcomeGateSettings"] !== undefined)
+          ls("welcomeGateSettings", map["welcomeGateSettings"]);
+
+        // Cache for sync reads
+        window.__appSettingsCache = map;
       }
 
       // =================== INIT ===================
+      // initData();
+      // syncAppSettingsFromSupabase();
+      // initWelcomeGate();
+      // restoreSession();
       initData();
-      initWelcomeGate();
+      Promise.all([
+        syncAppSettingsFromSupabase(),
+        syncPaymentPlansFromSupabase(),
+        syncPendingEditsFromSupabase(),
+      ]).then(() => {
+        initWelcomeGate();
+        if (
+          document
+            .getElementById("adminWelcomeGateView")
+            ?.classList.contains("active")
+        ) {
+          renderWelcomeGateAdmin();
+        }
+      });
       restoreSession();
       document.getElementById("adminDateLine") &&
         (document.getElementById("adminDateLine").textContent =
