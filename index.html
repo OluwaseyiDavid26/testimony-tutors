@@ -9988,7 +9988,7 @@ ANSWER: B"
 
               ls("complaints", mapped);
             }
-
+          }
             async function syncAnnouncementsFromSupabase() {
               const { data, error } = await supabaseClient
                 .from("announcements")
@@ -10013,7 +10013,7 @@ ANSWER: B"
 
               ls("announcements", mapped);
             }
-
+          
             async function syncStaffAccountsFromSupabase() {
               const { data, error } = await supabaseClient
                 .from("staff_accounts")
