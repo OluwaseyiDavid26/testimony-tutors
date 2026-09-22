@@ -9880,142 +9880,59 @@ ANSWER: B"
               ls("activityLog", mapped);
             }
 
-            // async function restoreSession() {
-            //   const {
-            //     data: { session },
-            //   } = await supabaseClient.auth.getSession();
-            //   if (!session) return; // no session, stay on login screen
-
-            //   // Try student first
-            //   const { data: studentRow } = await supabaseClient
-            //     .from("students")
-            //     .select("*")
-            //     .eq("auth_user_id", session.user.id)
-            //     .maybeSingle();
-
-            //   if (studentRow) {
-            //     const student = {
-            //       id: studentRow.id,
-            //       regNo: studentRow.reg_no,
-            //       firstName: studentRow.first_name,
-            //       lastName: studentRow.last_name,
-            //       fullName: studentRow.full_name,
-            //       dob: studentRow.dob,
-            //       gender: studentRow.gender,
-            //       phone: studentRow.phone,
-            //       address: studentRow.address,
-            //       branch: studentRow.branch,
-            //       department: studentRow.department,
-            //       classSession: studentRow.class_session,
-            //       examTypes: studentRow.exam_types,
-            //       subjects: studentRow.subjects,
-            //       regDate: studentRow.reg_date,
-            //       paymentPlan: studentRow.payment_plan,
-            //       amountPaid: studentRow.amount_paid,
-            //       paymentDate: studentRow.payment_date,
-            //       guardianName: studentRow.guardian_name,
-            //       guardianPhone: studentRow.guardian_phone,
-            //       status: studentRow.status,
-            //       photo: studentRow.photo_url,
-            //       eligible: studentRow.eligible,
-            //       approvalStatus: studentRow.approval_status,
-            //       addedBy: studentRow.added_by,
-            //     };
-            //     if (
-            //       student.status === "suspended" ||
-            //       student.approvalStatus !== "approved"
-            //     )
-            //       return;
-            //     ls("currentStudent", student);
-            //     document.getElementById("welcomeGatePage").style.display = "none";
-            //     document.getElementById("loginContainer").style.display = "none";
-            //     document.getElementById("studentDashboard").classList.add("active");
-            //     loadStudentDashboard();
-            //     return;
-            //   }
             async function restoreSession() {
-  const {
-    data: { session },
-  } = await supabaseClient.auth.getSession();
-  if (!session) return; // no session, stay on login screen
+              const {
+                data: { session },
+              } = await supabaseClient.auth.getSession();
+              if (!session) return; // no session, stay on login screen
 
-  // Try student first
-  const { data: studentRow } = await supabaseClient
-    .from("students")
-    .select("*")
-    .eq("auth_user_id", session.user.id)
-    .maybeSingle();
+              // Try student first
+              const { data: studentRow } = await supabaseClient
+                .from("students")
+                .select("*")
+                .eq("auth_user_id", session.user.id)
+                .maybeSingle();
 
-  if (studentRow) {
-    const student = {
-      id: studentRow.id,
-      regNo: studentRow.reg_no,
-      firstName: studentRow.first_name,
-      lastName: studentRow.last_name,
-      fullName: studentRow.full_name,
-      dob: studentRow.dob,
-      gender: studentRow.gender,
-      phone: studentRow.phone,
-      address: studentRow.address,
-      branch: studentRow.branch,
-      department: studentRow.department,
-      classSession: studentRow.class_session,
-      examTypes: studentRow.exam_types,
-      subjects: studentRow.subjects,
-      regDate: studentRow.reg_date,
-      paymentPlan: studentRow.payment_plan,
-      amountPaid: studentRow.amount_paid,
-      paymentDate: studentRow.payment_date,
-      guardianName: studentRow.guardian_name,
-      guardianPhone: studentRow.guardian_phone,
-      status: studentRow.status,
-      photo: studentRow.photo_url,
-      eligible: studentRow.eligible,
-      approvalStatus: studentRow.approval_status,
-      addedBy: studentRow.added_by,
-    };
-    if (
-      student.status === "suspended" ||
-      student.approvalStatus !== "approved"
-    )
-      return;
-    ls("currentStudent", student);
-    document.getElementById("welcomeGatePage").style.display = "none";
-    document.getElementById("loginContainer").style.display = "none";
-    document.getElementById("studentDashboard").classList.add("active");
-    loadStudentDashboard();
-    return;
-  }
-
-  // Try staff/admin
-  const { data: staffRow } = await supabaseClient
-    .from("staff_accounts")
-    .select("*")
-    .eq("auth_user_id", session.user.id)
-    .maybeSingle();
-
-  if (staffRow) {
-    if (staffRow.active === false) return;
-    const staff = {
-      id: staffRow.id,
-      username: staffRow.username,
-      name: staffRow.name,
-      role: staffRow.role,
-      branch: staffRow.branch,
-      active: staffRow.active,
-    };
-    ls("currentStaff", staff);
-    document.getElementById("welcomeGatePage").style.display = "none";
-    document.getElementById("loginContainer").style.display = "none";
-    if (staff.role === "admin") {
-      document.getElementById("adminDashboard").classList.add("active");
-      loadAdminDashboard();
-    } else {
-      document.getElementById("staffDashboard").classList.add("active");
-      loadStaffDashboard();
-    }
-  }
-}
+              if (studentRow) {
+                const student = {
+                  id: studentRow.id,
+                  regNo: studentRow.reg_no,
+                  firstName: studentRow.first_name,
+                  lastName: studentRow.last_name,
+                  fullName: studentRow.full_name,
+                  dob: studentRow.dob,
+                  gender: studentRow.gender,
+                  phone: studentRow.phone,
+                  address: studentRow.address,
+                  branch: studentRow.branch,
+                  department: studentRow.department,
+                  classSession: studentRow.class_session,
+                  examTypes: studentRow.exam_types,
+                  subjects: studentRow.subjects,
+                  regDate: studentRow.reg_date,
+                  paymentPlan: studentRow.payment_plan,
+                  amountPaid: studentRow.amount_paid,
+                  paymentDate: studentRow.payment_date,
+                  guardianName: studentRow.guardian_name,
+                  guardianPhone: studentRow.guardian_phone,
+                  status: studentRow.status,
+                  photo: studentRow.photo_url,
+                  eligible: studentRow.eligible,
+                  approvalStatus: studentRow.approval_status,
+                  addedBy: studentRow.added_by,
+                };
+                if (
+                  student.status === "suspended" ||
+                  student.approvalStatus !== "approved"
+                )
+                  return;
+                ls("currentStudent", student);
+                document.getElementById("welcomeGatePage").style.display = "none";
+                document.getElementById("loginContainer").style.display = "none";
+                document.getElementById("studentDashboard").classList.add("active");
+                loadStudentDashboard();
+                return;
+              }
 
               // Try staff/admin
               const { data: staffRow } = await supabaseClient
@@ -20422,63 +20339,72 @@ ANSWER: B"
               (document.getElementById("adminDateLine").textContent =
                 new Date().toDateString());
             updatePaymentPlanDropdowns();
-            (function patchShowAdmin() {
-              const original = window.showAdmin;
-              if (original) {
-                window.showAdmin = function (section) {
-                  original(section);
-                  if (section === "paymentSettings") loadPaymentSettings();
-                  if (section === "attendance") {
-                    setTimeout(() => {
-                      renderQuickStudentPicker();
-                      const bi = document.getElementById("barcodeInput");
-                      if (bi) bi.focus();
-                    }, 120);
+            (function finalizeInit() {
+              try {
+                (function patchShowAdmin() {
+                  const original = window.showAdmin;
+                  if (original) {
+                    window.showAdmin = function (section) {
+                      original(section);
+                      if (section === "paymentSettings") loadPaymentSettings();
+                      if (section === "attendance") {
+                        setTimeout(() => {
+                          renderQuickStudentPicker();
+                          const bi = document.getElementById("barcodeInput");
+                          if (bi) bi.focus();
+                        }, 120);
+                      }
+                      if (section === "attendanceAnalytics") renderAttendanceAnalytics();
+                      if (section === "complaints") renderComplaintsAdmin();
+                      if (section === "announcements") renderAnnouncementsAdmin();
+                      if (section === "idCardSettings") loadIDCardLogoPreview();
+                    };
                   }
-                  if (section === "attendanceAnalytics") renderAttendanceAnalytics();
-                  if (section === "complaints") renderComplaintsAdmin();
-                  if (section === "announcements") renderAnnouncementsAdmin();
-                  if (section === "idCardSettings") loadIDCardLogoPreview();
-                };
+                })();
+
+                (function patchShowStudent() {
+                  const original = window.showStudent;
+                  if (original) {
+                    window.showStudent = function (section) {
+                      original(section);
+                      setTimeout(() => {
+                        if (window.MathJax) {
+                          if (MathJax.typesetPromise) MathJax.typesetPromise();
+                        }
+                      }, 400);
+                    };
+                  }
+                })();
+
+                const origOpen = window.openTestQuestionPanel;
+                if (origOpen) {
+                  window.openTestQuestionPanel = function (testId) {
+                    origOpen(testId);
+                    setTimeout(() => {
+                      if (window.MathJax) {
+                        if (MathJax.typesetPromise) MathJax.typesetPromise();
+                      }
+                    }, 400);
+                  };
+                }
+
+                console.log("✅ Testimony Tutors system initialized.");
+                console.log("📚 All subjects available for tests.");
+                console.log("📐 Math toolbar with easy-click symbols inserted (improved).");
+                console.log("📊 Attendance analytics by branch with comparison.");
+                console.log("⏳ Clock-out requires 5 min minimum after clock-in.");
+                console.log("🎯 Eligibility toggle for tests/exams/CBT.");
+                console.log("💬 Complaints system integrated.");
+                console.log("📢 Announcements system with department targeting.");
+                console.log("🆔 ID cards admin-only (removed from student).");
+                console.log("🔀 Questions shuffled per student for tests and CBT.");
+                console.log("⏰ Tests have time windows (start/end time).");
+                console.log("🔒 Student scores hidden until admin posts results.");
+                console.log("🖼️ ID card watermark logo can be uploaded in settings.");
+              } catch (error) {
+                console.error("Initialization failed:", error);
               }
             })();
-            (function patchShowStudent() {
-              const original = window.showStudent;
-              if (original) {
-                window.showStudent = function (section) {
-                  original(section);
-                  setTimeout(() => {
-                    if (window.MathJax)
-                      MathJax.typesetPromise && MathJax.typesetPromise();
-                  }, 400);
-                };
-              }
-            })();
-            const origOpen = window.openTestQuestionPanel;
-            if (origOpen) {
-              window.openTestQuestionPanel = function (testId) {
-                origOpen(testId);
-                setTimeout(() => {
-                  if (window.MathJax)
-                    MathJax.typesetPromise && MathJax.typesetPromise();
-                }, 400);
-              };
-            }
-            console.log("✅ Testimony Tutors system initialized.");
-            console.log("📚 All subjects available for tests.");
-            console.log(
-              "📐 Math toolbar with easy-click symbols inserted (improved).",
-            );
-            console.log("📊 Attendance analytics by branch with comparison.");
-            console.log("⏳ Clock-out requires 5 min minimum after clock-in.");
-            console.log("🎯 Eligibility toggle for tests/exams/CBT.");
-            console.log("💬 Complaints system integrated.");
-            console.log("📢 Announcements system with department targeting.");
-            console.log("🆔 ID cards admin-only (removed from student).");
-            console.log("🔀 Questions shuffled per student for tests and CBT.");
-            console.log("⏰ Tests have time windows (start/end time).");
-            console.log("🔒 Student scores hidden until admin posts results.");
-            console.log("🖼️ ID card watermark logo can be uploaded in settings.");
     </script>
   </body>
 </html> 
