@@ -18001,7 +18001,7 @@ ANSWER: B"
           );
           return;
         }
-
+        await syncStudentsFromSupabase();
         const student = data.student;
         const regNo = student.reg_no;
         const password = data.password;
@@ -19061,8 +19061,14 @@ ANSWER: B"
 
       // =================== ADMIN: APPROVALS ===================
       // function renderApprovals() {
+      // async function renderApprovals() {
+      //   await syncPendingEditsFromSupabase();
       async function renderApprovals() {
-        await syncPendingEditsFromSupabase();
+        await Promise.all([
+          syncPendingEditsFromSupabase(),
+          syncStudentsFromSupabase(),
+          syncPaymentsFromSupabase(),
+        ]);
         const students = ls("students") || [];
         const payments = ls("payments") || [];
         const edits = ls("pendingEdits") || [];
