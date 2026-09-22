@@ -9958,43 +9958,45 @@ ANSWER: B"
             active: staffRow.active,
           };
           ls("currentStaff", staff);
-          function showOnlyScreen(which) {
+          if (staff.role === "admin") {
             document.getElementById("welcomeGatePage").style.display = "none";
             document.getElementById("loginContainer").style.display = "none";
-            if (staff.role === "admin") {
-              document.getElementById("adminDashboard").classList.add("active");
-              loadAdminDashboard();
-            } else {
-              document.getElementById("staffDashboard").classList.add("active");
-              loadStaffDashboard();
-            }
+            document.getElementById("adminDashboard").classList.add("active");
+            loadAdminDashboard();
+          } else {
+            document.getElementById("welcomeGatePage").style.display = "none";
+            document.getElementById("loginContainer").style.display = "none";
+            document.getElementById("staffDashboard").classList.add("active");
+            loadStaffDashboard();
           }
-        }
-        async function syncComplaintsFromSupabase() {
-          const { data, error } = await supabaseClient
-            .from("complaints")
-            .select("*, students(reg_no, full_name)")
-            .order("created_at", { ascending: true });
-
-          if (error) {
-            console.error("Failed to sync complaints:", error);
-            return;
-          }
-
-          const mapped = (data || []).map((row) => ({
-            id: row.id,
-            studentReg: row.students ? row.students.reg_no : "",
-            studentName: row.students ? row.students.full_name : "",
-            subject: row.subject,
-            message: row.message,
-            date: row.created_at ? row.created_at.slice(0, 10) : "",
-            status: row.status,
-            response: row.response,
-          }));
-
-          ls("complaints", mapped);
         }
       }
+
+      async function syncComplaintsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("complaints")
+          .select("*, students(reg_no, full_name)")
+          .order("created_at", { ascending: true });
+
+        if (error) {
+          console.error("Failed to sync complaints:", error);
+          return;
+        }
+
+        const mapped = (data || []).map((row) => ({
+          id: row.id,
+          studentReg: row.students ? row.students.reg_no : "",
+          studentName: row.students ? row.students.full_name : "",
+          subject: row.subject,
+          message: row.message,
+          date: row.created_at ? row.created_at.slice(0, 10) : "",
+          status: row.status,
+          response: row.response,
+        }));
+
+        ls("complaints", mapped);
+      }
+
       async function syncAnnouncementsFromSupabase() {
         const { data, error } = await supabaseClient
           .from("announcements")
@@ -18001,7 +18003,7 @@ ANSWER: B"
           );
           return;
         }
-        await syncStudentsFromSupabase();
+
         const student = data.student;
         const regNo = student.reg_no;
         const password = data.password;
@@ -19061,14 +19063,8 @@ ANSWER: B"
 
       // =================== ADMIN: APPROVALS ===================
       // function renderApprovals() {
-      // async function renderApprovals() {
-      //   await syncPendingEditsFromSupabase();
       async function renderApprovals() {
-        await Promise.all([
-          syncPendingEditsFromSupabase(),
-          syncStudentsFromSupabase(),
-          syncPaymentsFromSupabase(),
-        ]);
+        await syncPendingEditsFromSupabase();
         const students = ls("students") || [];
         const payments = ls("payments") || [];
         const edits = ls("pendingEdits") || [];
