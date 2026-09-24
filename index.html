@@ -10915,9 +10915,33 @@ ANSWER: B"
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function (e) {
-          const preview = document.getElementById("photoPreview");
-          preview.innerHTML = `<img src="${e.target.result}" alt="Passport">`;
-          uploadedPhotoData = e.target.result;
+          const img = new Image();
+          img.onload = function () {
+            // Camera photos can be several MB. Sending that raw as base64
+            // in the registration request is what was causing "Load failed"
+            // on mobile — resize/compress it here first so the payload
+            // stays small no matter what the camera produced.
+            const MAX_DIM = 800;
+            let width = img.width;
+            let height = img.height;
+            if (width > height && width > MAX_DIM) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else if (height > MAX_DIM) {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+            const compressed = canvas.toDataURL("image/jpeg", 0.7);
+
+            const preview = document.getElementById("photoPreview");
+            preview.innerHTML = `<img src="${compressed}" alt="Passport">`;
+            uploadedPhotoData = compressed;
+          };
+          img.src = e.target.result;
         };
         reader.readAsDataURL(file);
       }
@@ -11701,17 +11725,38 @@ ANSWER: B"
         if (!confirm("Delete this student? This action cannot be undone."))
           return;
 
-        const { error } = await supabaseClient
-          .from("students")
-          .delete()
-          .eq("id", id);
+        // Goes through the delete-student Edge Function instead of deleting
+        // the row directly, so the student's Auth login gets removed too —
+        // otherwise it's left behind and can block a future registration
+        // number with "already registered" (the bug we hit earlier).
+        const { data, error } = await supabaseClient.functions.invoke(
+          "delete-student",
+          { body: { studentId: id } },
+        );
 
-        if (error) {
-          alert("❌ Failed to delete student: " + error.message);
-          return; // don't touch local copy if the DB delete failed
+        if (error || data?.error) {
+          let serverMessage = data?.error;
+          if (!serverMessage && error) {
+            try {
+              const body = await error.context.json();
+              serverMessage = body?.error || body?.message;
+            } catch (parseErr) {
+              try {
+                serverMessage = await error.context.text();
+              } catch (textErr) {
+                serverMessage = null;
+              }
+            }
+          }
+          alert(
+            "❌ Failed to delete student: " +
+              (serverMessage || error?.message || "Unknown error"),
+          );
+          console.error("delete-student failed:", error, data);
+          return; // don't touch local copy if the delete failed
         }
 
-        // DB delete succeeded — now safe to drop it from the local mirror
+        // Delete succeeded — now safe to drop it from the local mirror
         const students = (ls("students") || []).filter((s) => s.id !== id);
         ls("students", students);
         renderStudentsTable();
