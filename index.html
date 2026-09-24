@@ -9360,17 +9360,35 @@ ANSWER: B"
         });
       }
 
+      // In-memory mirror of everything ls() has written this session. This is
+      // what actually fixes the "student added but doesn't show in Manage
+      // Students" bug: student photos are stored as base64 (see
+      // previewPhoto/compressed above), so the full students list can easily
+      // exceed the ~5MB localStorage quota once there are enough students
+      // with photos. When that happens, localStorage.setItem() throws and
+      // the write silently fails — but the old code still returned `v` as if
+      // it had saved, and every *other* caller just does `ls("students")`
+      // with no v, which re-reads localStorage and gets back the OLD list
+      // (missing the student you just added), even though the student was
+      // correctly saved to Supabase and syncStudentsFromSupabase() built the
+      // right in-memory array. Keeping that array here as a fallback means a
+      // failed disk write no longer erases the fresh data for the rest of
+      // the session.
+      const __lsMemoryCache = {};
+
       function ls(k, v) {
         if (v !== undefined) {
+          __lsMemoryCache[k] = v;
           try {
             localStorage.setItem(k, JSON.stringify(v));
           } catch (e) {
             console.warn(
-              `ls(): could not save "${k}" to localStorage (${e.name}). Continuing without caching it.`,
+              `ls(): could not save "${k}" to localStorage (${e.name}). Keeping it in memory for this session instead.`,
             );
           }
           return v;
         }
+        if (k in __lsMemoryCache) return __lsMemoryCache[k];
         const r = localStorage.getItem(k);
         return r ? JSON.parse(r) : null;
       }
