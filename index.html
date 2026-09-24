@@ -875,11 +875,14 @@
         background: rgba(0, 0, 0, 0.5);
         z-index: 90;
         display: none;
+        opacity: 0;
+        transition: opacity 0.3s ease;
         backdrop-filter: blur(2px);
       }
 
       .sidebar-overlay.active {
         display: block;
+        opacity: 1;
       }
 
       .main-content {
@@ -995,11 +998,11 @@
 
       .content-section {
         display: none;
-        animation: fadeIn 0.3s ease;
       }
 
       .content-section.active {
         display: block;
+        animation: fadeIn 0.35s ease;
       }
 
       .section-card {
@@ -1178,6 +1181,7 @@
         border-bottom: 1px solid var(--border);
         font-size: 13px;
         vertical-align: middle;
+        transition: background 0.2s ease;
       }
 
       tr:hover td {
@@ -1245,6 +1249,16 @@
         white-space: nowrap;
       }
 
+      .action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+        filter: brightness(0.96);
+      }
+
+      .action-btn:active {
+        transform: scale(0.94);
+      }
+
       .edit-btn {
         background: #dbeafe;
         color: var(--blue);
@@ -1299,6 +1313,10 @@
         font-size: 13px;
         transition: all 0.25s;
         white-space: nowrap;
+      }
+
+      .btn:active {
+        transform: scale(0.96);
       }
 
       .btn-primary {
@@ -3522,7 +3540,7 @@
       }
 
       .modal {
-        display: none;
+        display: flex;
         position: fixed;
         inset: 0;
         background: rgba(15, 23, 42, 0.6);
@@ -3531,10 +3549,18 @@
         align-items: center;
         justify-content: center;
         padding: 16px;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition:
+          opacity 0.25s ease,
+          visibility 0.25s ease;
       }
 
       .modal.active {
-        display: flex;
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
       }
 
       .modal-content {
@@ -3545,8 +3571,17 @@
         max-width: 560px;
         max-height: 92vh;
         overflow-y: auto;
-        animation: fadeIn 0.3s ease;
         box-shadow: 0 40px 80px rgba(0, 0, 0, 0.3);
+        transform: translateY(24px) scale(0.96);
+        opacity: 0;
+        transition:
+          transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+          opacity 0.25s ease;
+      }
+
+      .modal.active .modal-content {
+        transform: translateY(0) scale(1);
+        opacity: 1;
       }
 
       .modal-header {
@@ -20501,7 +20536,7 @@ ANSWER: B"
           }
 
           console.log("✅ Testimony Tutors system initialized.");
-          console.log("📚 All subjects available for tests.");
+          console.log("📚 All subjects available for tests");
           console.log(
             "📐 Math toolbar with easy-click symbols inserted (improved).",
           );
