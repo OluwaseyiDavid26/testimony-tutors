@@ -19167,10 +19167,16 @@ ANSWER: B"
         const staff = getCurrentStaff();
         if (!staff) return;
         const todayStr = fmtDate(new Date());
+        // Was filtering to a.staffId === staff.id only, which is why student
+        // logins (now correctly synced — see the "Student Login" rows on
+        // Dashboard) never showed up here even for the same day/branch.
+        // Matching the same staffId-OR-branch-student-login rule used on
+        // the Dashboard's Recent Submissions so both views agree.
         const log = (ls("activityLog") || [])
           .filter(
             (a) =>
-              a.staffId === staff.id &&
+              (a.staffId === staff.id ||
+                (a.type === "student_login" && a.branch === staff.branch)) &&
               fmtDate(new Date(a.timestamp)) === todayStr,
           )
           .slice()
