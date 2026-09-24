@@ -10565,12 +10565,17 @@ ANSWER: B"
       }
 
       async function loadAdminDashboard() {
-        await syncAppSettingsFromSupabase();
-        await syncStudentsFromSupabase();
-        await syncPaymentsFromSupabase();
-        await syncAttendanceFromSupabase();
-        await syncStaffAccountsFromSupabase();
-        await syncActivityLogFromSupabase();
+        // These six pull from independent Supabase tables — nothing here depends
+        // on another one finishing first, so run them concurrently instead of
+        // waiting on each round trip one at a time.
+        await Promise.all([
+          syncAppSettingsFromSupabase(),
+          syncStudentsFromSupabase(),
+          syncPaymentsFromSupabase(),
+          syncAttendanceFromSupabase(),
+          syncStaffAccountsFromSupabase(),
+          syncActivityLogFromSupabase(),
+        ]);
         document.getElementById("adminDateLine").textContent =
           // await syncStudentsFromSupabase();
           //       function loadAdminDashboard() {
@@ -10714,36 +10719,43 @@ ANSWER: B"
       let eligibilityFilter = "";
 
       async function showAdmin(section) {
-        await syncStudentsFromSupabase();
-        // if (
-        //   ["attendance", "attendanceAnalytics", "dashboard"].includes(section)
-        // ) {
-        //   await syncAttendanceFromSupabase();
+        // Build the list of syncs this section actually needs, then fire them
+        // all at once — they hit independent tables, so there's no reason to
+        // make the user wait on each network round trip in sequence.
+        const pending = [syncStudentsFromSupabase()];
         if (
           ["attendance", "attendanceAnalytics", "dashboard"].includes(section)
         ) {
-          await syncAttendanceFromSupabase();
+          pending.push(syncAttendanceFromSupabase());
         }
         if (["payments", "approvals", "dashboard"].includes(section)) {
-          await syncPaymentsFromSupabase();
+          pending.push(syncPaymentsFromSupabase());
         }
         if (["staffAccounts", "dashboard"].includes(section)) {
-          await syncStaffAccountsFromSupabase();
+          pending.push(syncStaffAccountsFromSupabase());
         }
         if (["complaints"].includes(section)) {
-          await syncComplaintsFromSupabase();
+          pending.push(syncComplaintsFromSupabase());
         }
         if (["announcements"].includes(section)) {
-          await syncAnnouncementsFromSupabase();
+          pending.push(syncAnnouncementsFromSupabase());
         }
         if (["activityLog", "approvals", "dashboard"].includes(section)) {
-          await syncActivityLogFromSupabase();
+          pending.push(syncActivityLogFromSupabase());
         }
         if (["tests", "dashboard"].includes(section)) {
-          await syncTestsFromSupabase();
-          await syncAllTestQuestionsFromSupabase();
-          await syncTestResultsFromSupabase();
+          // syncAllTestQuestionsFromSupabase() reads the local "tests" list to
+          // know which test IDs to fetch questions for, so it has to wait for
+          // syncTestsFromSupabase() to finish. syncTestResultsFromSupabase()
+          // hits its own table and doesn't depend on either — run it alongside.
+          pending.push(
+            syncTestsFromSupabase().then(() =>
+              syncAllTestQuestionsFromSupabase(),
+            ),
+            syncTestResultsFromSupabase(),
+          );
         }
+        await Promise.all(pending);
         document
           .querySelectorAll("#adminDashboard .content-section")
           .forEach((s) => s.classList.remove("active"));
@@ -11223,19 +11235,31 @@ ANSWER: B"
         renderStudentsTable();
       }
 
-      function toggleEligibility(id) {
+      async function toggleEligibility(id) {
         const students = ls("students") || [];
         const idx = students.findIndex((s) => s.id === id);
         if (idx < 0) return;
-        students[idx].eligible =
-          students[idx].eligible === false ? true : false;
+        const newValue = students[idx].eligible === false ? true : false;
+
+        const { error } = await supabaseClient
+          .from("students")
+          .update({ eligible: newValue })
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to update eligibility: " + error.message);
+          return; // don't touch local copy if the DB update failed
+        }
+
+        students[idx].eligible = newValue;
         ls("students", students);
         renderStudentsTable();
         alert(
           "✅ Eligibility toggled for " +
             students[idx].fullName +
             ". Now: " +
-            (students[idx].eligible ? "Eligible" : "Ineligible"),
+            (students[idx].eligible ? "Eligible" : "Ineligible") +
+            " (synced to all devices).",
         );
       }
       // =================== VIEW/EDIT/DELETE STUDENT ===================
@@ -11614,9 +11638,21 @@ ANSWER: B"
         alert("✅ Student updated!");
       }
 
-      function deleteStudent(id) {
+      async function deleteStudent(id) {
         if (!confirm("Delete this student? This action cannot be undone."))
           return;
+
+        const { error } = await supabaseClient
+          .from("students")
+          .delete()
+          .eq("id", id);
+
+        if (error) {
+          alert("❌ Failed to delete student: " + error.message);
+          return; // don't touch local copy if the DB delete failed
+        }
+
+        // DB delete succeeded — now safe to drop it from the local mirror
         const students = (ls("students") || []).filter((s) => s.id !== id);
         ls("students", students);
         renderStudentsTable();
@@ -13419,7 +13455,7 @@ ANSWER: B"
         document.getElementById("paymentSettingsStatus").innerHTML = "";
       }
 
-      function savePaymentSettings(e) {
+      async function savePaymentSettings(e) {
         e.preventDefault();
         const morningAmount = parseInt(
           document.getElementById("morningAmount").value,
@@ -13452,9 +13488,45 @@ ANSWER: B"
             days: afternoonDays,
           },
         };
+
+        // Push each session's plan to Supabase — update the row for that
+        // session if it already exists, otherwise insert a new one. This
+        // never assumed a unique constraint on "session", so it looks up
+        // existing rows first instead of relying on an upsert.
+        const { data: existingRows, error: fetchError } = await supabaseClient
+          .from("payment_plans")
+          .select("id, session");
+
+        if (fetchError) {
+          alert("❌ Failed to save payment settings: " + fetchError.message);
+          return;
+        }
+
+        for (const session of ["morning", "afternoon"]) {
+          const existing = (existingRows || []).find(
+            (r) => (r.session || "").toLowerCase() === session,
+          );
+          const payload = {
+            session,
+            amount: plans[session].amount,
+            days: plans[session].days,
+          };
+          const { error } = existing
+            ? await supabaseClient
+                .from("payment_plans")
+                .update(payload)
+                .eq("id", existing.id)
+            : await supabaseClient.from("payment_plans").insert(payload);
+
+          if (error) {
+            alert(`❌ Failed to save ${session} plan: ` + error.message);
+            return; // don't touch local copy if the DB write failed
+          }
+        }
+
         ls("paymentPlans", plans);
         document.getElementById("paymentSettingsStatus").innerHTML =
-          `<div style="color:var(--success);font-weight:600;">✅ Payment settings updated successfully!</div>`;
+          `<div style="color:var(--success);font-weight:600;">✅ Payment settings updated successfully (synced to all devices)!</div>`;
         updatePaymentPlanDropdowns();
       }
 
@@ -14938,7 +15010,7 @@ ANSWER: B"
         renderBulkPreview(results, errors, false);
       }
 
-      function submitBulkImport() {
+      async function submitBulkImport() {
         let results;
         if (window._bulkCsvResults) {
           results = window._bulkCsvResults;
@@ -14996,27 +15068,49 @@ ANSWER: B"
             return;
           }
           const tq = ls("testQuestions") || {};
-          if (!tq[activeTestId]) tq[activeTestId] = [];
-          results.forEach((q, i) => {
-            tq[activeTestId].push({
-              id: "TQ" + Date.now() + "_" + i,
-              question: q.question,
-              options: q.options,
-              correct: q.correct,
-              marks: q.marks || 1,
-              explanation: q.explanation || "",
-            });
-          });
-          ls("testQuestions", tq);
+          const existingCount = (tq[activeTestId] || []).length;
+
+          // Push every question to Supabase in one insert, same shape
+          // saveTestQuestion() uses for a single question.
+          const rows = results.map((q, i) => ({
+            test_id: activeTestId,
+            question_text: q.question,
+            options: q.options,
+            correct_answer: q.options[q.correct],
+            marks: q.marks || 1,
+            explanation: q.explanation || "",
+            order_index: existingCount + i + 1,
+          }));
+
+          const { error: insertError } = await supabaseClient
+            .from("test_questions")
+            .insert(rows);
+
+          if (insertError) {
+            alert("❌ Failed to import questions: " + insertError.message);
+            return; // nothing was saved locally, so nothing to roll back
+          }
+
+          // Keep the test's running total_marks in sync on the server too
           const tests = ls("tests") || [];
           const idx = tests.findIndex((t) => t.id === activeTestId);
           if (idx >= 0) {
-            tests[idx].totalMarks = tq[activeTestId].reduce(
-              (s, q) => s + (q.marks || 1),
-              0,
-            );
-            ls("tests", tests);
+            const addedMarks = rows.reduce((s, r) => s + (r.marks || 1), 0);
+            const newTotal = (tests[idx].totalMarks || 0) + addedMarks;
+            const { error: totalError } = await supabaseClient
+              .from("tests")
+              .update({ total_marks: newTotal })
+              .eq("id", activeTestId);
+            if (totalError) {
+              console.error("Failed to update test total marks:", totalError);
+              // Questions are already saved server-side — don't block the user over this
+            }
           }
+
+          // Refresh the local mirror from Supabase so this device (and every
+          // other one) shows exactly what's in the database now.
+          await syncTestQuestionsFromSupabase(activeTestId);
+          await syncTestsFromSupabase();
           renderTestQuestionsList(activeTestId);
           renderTestsTable();
         }
