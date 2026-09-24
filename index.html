@@ -10567,6 +10567,10 @@ ANSWER: B"
       async function loadAdminDashboard() {
         await syncAppSettingsFromSupabase();
         await syncStudentsFromSupabase();
+        await syncPaymentsFromSupabase();
+        await syncAttendanceFromSupabase();
+        await syncStaffAccountsFromSupabase();
+        await syncActivityLogFromSupabase();
         document.getElementById("adminDateLine").textContent =
           // await syncStudentsFromSupabase();
           //       function loadAdminDashboard() {
@@ -10705,7 +10709,8 @@ ANSWER: B"
       // await syncStudentsFromSupabase();
       //             function showAdmin(section) {
       //               document
-      let filteredStudents = null;
+      let studentSearchQuery = "";
+      let studentBranchFilter = "";
       let eligibilityFilter = "";
 
       async function showAdmin(section) {
@@ -11137,7 +11142,19 @@ ANSWER: B"
       // =================== STUDENTS TABLE ===================
       function renderStudentsTable(data) {
         const allStudents = ls("students") || [];
-        let students = data || filteredStudents || allStudents;
+        let students = data || allStudents;
+        if (studentSearchQuery) {
+          const q = studentSearchQuery;
+          students = students.filter(
+            (s) =>
+              s.fullName.toLowerCase().includes(q) ||
+              s.regNo.toLowerCase().includes(q) ||
+              s.branch.toLowerCase().includes(q),
+          );
+        }
+        if (studentBranchFilter) {
+          students = students.filter((s) => s.branch === studentBranchFilter);
+        }
         if (eligibilityFilter) {
           students = students.filter(
             (s) => s.eligible === (eligibilityFilter === "eligible"),
@@ -11190,22 +11207,14 @@ ANSWER: B"
       }
 
       function searchStudents() {
-        const q = document.getElementById("searchStudent").value.toLowerCase();
-        const students = ls("students") || [];
-        filteredStudents = students.filter(
-          (s) =>
-            s.fullName.toLowerCase().includes(q) ||
-            s.regNo.toLowerCase().includes(q) ||
-            s.branch.toLowerCase().includes(q),
-        );
+        studentSearchQuery = document
+          .getElementById("searchStudent")
+          .value.toLowerCase();
         renderStudentsTable();
       }
 
       function filterStudentsByBranch(branch) {
-        const students = ls("students") || [];
-        filteredStudents = branch
-          ? students.filter((s) => s.branch === branch)
-          : students;
+        studentBranchFilter = branch;
         renderStudentsTable();
       }
 
