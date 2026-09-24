@@ -11137,9 +11137,28 @@ ANSWER: B"
         );
 
         if (error || data?.error) {
+          // supabase-js only gives a generic "Edge Function returned a
+          // non-2xx status code" in error.message — the real reason lives
+          // in the response body (error.context). Try to read it so the
+          // real cause is shown instead of the generic message.
+          let serverMessage = data?.error;
+          if (!serverMessage && error) {
+            try {
+              const body = await error.context.json();
+              serverMessage = body?.error || body?.message;
+            } catch (parseErr) {
+              try {
+                serverMessage = await error.context.text();
+              } catch (textErr) {
+                serverMessage = null;
+              }
+            }
+          }
           alert(
-            "❌ Failed to register student: " + (data?.error || error.message),
+            "❌ Failed to register student: " +
+              (serverMessage || error?.message || "Unknown error"),
           );
+          console.error("create-student failed:", error, data);
           return;
         }
 
@@ -11185,6 +11204,11 @@ ANSWER: B"
         document.getElementById("paymentSummary").innerHTML = "";
         document.getElementById("photoPreview").innerHTML = "📷";
         uploadedPhotoData = null;
+
+        // Re-sync from Supabase and jump to Manage Students so the new
+        // student is visible immediately, instead of only appearing after
+        // the admin manually re-opens that section.
+        await showAdmin("students");
       }
       // =================== STUDENTS TABLE ===================
       function renderStudentsTable(data) {
