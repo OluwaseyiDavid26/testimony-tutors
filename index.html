@@ -9347,7 +9347,17 @@ ANSWER: B"
       }
 
       function fmtDate(d) {
-        return d.toISOString().split("T")[0];
+        // toISOString() converts to UTC first. Nigeria is UTC+1, so for
+        // anything happening between local 00:00 and 00:59, this used to
+        // return YESTERDAY's date — meaning "Attendance Scanned Today" and
+        // "Payments Submitted Today" on the staff dashboard would compare
+        // against the wrong date and undercount (or show 0) right at the
+        // start of the day. Using local date parts instead keeps this in
+        // sync with what staff actually see on their clock.
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
       }
 
       function fmtDateTime(d) {
