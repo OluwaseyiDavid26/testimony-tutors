@@ -9256,6 +9256,13 @@ ANSWER: B"
     <script>
       // =================== DATA HELPERS ===================
       function initData() {
+        // One-time cleanup: "loginLogs" was a browser-local, never-synced
+        // cache of student logins that's no longer used now that logins go
+        // through Supabase's activity_log table. Removing it frees up
+        // localStorage quota (relevant since student photos are base64 and
+        // can eat into that same quota) and guarantees no stale local data
+        // is left sitting around from before this fix.
+        localStorage.removeItem("loginLogs");
         if (!ls("students")) ls("students", []);
         if (!ls("payments")) ls("payments", []);
         if (!ls("tests")) ls("tests", []);
