@@ -9934,17 +9934,32 @@ ANSWER: B"
           return;
         }
 
-        const mapped = (data || []).map((row) => ({
-          id: row.id,
-          staffId: row.staff_id,
-          staffName: row.staff_accounts ? row.staff_accounts.name : "Admin",
-          branch: row.staff_accounts ? row.staff_accounts.branch : "All",
-          type: row.type,
-          description: row.description,
-          status: row.status,
-          timestamp: row.created_at,
-          meta: row.meta,
-        }));
+        // Student logins have no staff_accounts row to join against
+        // (staff_id is null for them), so their display name/branch live
+        // in meta instead — without this they'd wrongly show up as
+        // "Admin" / "All" everywhere they're listed.
+        const mapped = (data || []).map((row) => {
+          const isStudentEvent = !row.staff_accounts && row.meta;
+          return {
+            id: row.id,
+            staffId: row.staff_id,
+            staffName: row.staff_accounts
+              ? row.staff_accounts.name
+              : isStudentEvent
+                ? row.meta.name || row.meta.regNo || "Student"
+                : "Admin",
+            branch: row.staff_accounts
+              ? row.staff_accounts.branch
+              : isStudentEvent && row.meta.branch
+                ? row.meta.branch
+                : "All",
+            type: row.type,
+            description: row.description,
+            status: row.status,
+            timestamp: row.created_at,
+            meta: row.meta,
+          };
+        });
 
         ls("activityLog", mapped);
       }
@@ -10193,18 +10208,24 @@ ANSWER: B"
         }
 
         ls("currentStudent", student);
-        const loginLogs = ls("loginLogs") || [];
-        const now = new Date();
-        loginLogs.push({
-          regNo: student.regNo,
-          name: student.fullName,
-          date: fmtDate(now),
-          time: now.toLocaleTimeString("en-GB", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        });
-        ls("loginLogs", loginLogs);
+        // Previously this only pushed to ls("loginLogs") — a browser-local
+        // cache that never reached Supabase, so a student login could never
+        // appear on the staff/admin dashboards, on any device, ever. Routing
+        // it through logActivity() puts it in the same Supabase-backed
+        // activity_log table every other event (registrations, payments,
+        // staff logins) already uses, so it actually syncs.
+        logActivity(
+          null,
+          "student_login",
+          student.fullName + " (" + student.regNo + ") logged in",
+          "info",
+          {
+            studentId: student.id,
+            regNo: student.regNo,
+            name: student.fullName,
+            branch: student.branch,
+          },
+        );
 
         document.getElementById("loginContainer").style.display = "none";
         document.getElementById("studentDashboard").classList.add("active");
@@ -11441,8 +11462,8 @@ ANSWER: B"
         const cbtResults = (ls("portal_cbt_results") || []).filter(
           (r) => r.regNo === s.regNo,
         );
-        const logins = (ls("loginLogs") || []).filter(
-          (l) => l.regNo === s.regNo,
+        const logins = (ls("activityLog") || []).filter(
+          (a) => a.type === "student_login" && a.meta?.regNo === s.regNo,
         );
         const todayStr = fmtDate(new Date());
         const clockedInToday = attendance.some((a) => a.date === todayStr);
@@ -11598,12 +11619,17 @@ ANSWER: B"
                   .join("")}</tbody></table></div>`
               : emptyMsg("📭", "No payment history recorded yet."));
         } else if (trackingTab === "logins") {
-          const records = (ls("loginLogs") || [])
-            .filter((l) => l.regNo === s.regNo)
-            .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+          const records = (ls("activityLog") || [])
+            .filter(
+              (a) => a.type === "student_login" && a.meta?.regNo === s.regNo,
+            )
+            .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
           container.innerHTML = records.length
             ? `<div class="table-responsive"><table><thead><tr><th>Date</th><th>Time</th></tr></thead><tbody>${records
-                .map((l) => `<tr><td>${l.date}</td><td>${l.time}</td></tr>`)
+                .map((a) => {
+                  const t = new Date(a.timestamp);
+                  return `<tr><td>${fmtDate(t)}</td><td>${t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</td></tr>`;
+                })
                 .join("")}</tbody></table></div>`
             : emptyMsg("📭", "No login history recorded yet.");
         }
@@ -17736,6 +17762,7 @@ ANSWER: B"
             attendance: "📋 Attendance",
             edit_request: "✏️ Edit Request",
             login: "🔑 Login",
+            student_login: "🎓 Student Login",
           }[t] || t
         );
       }
@@ -17987,9 +18014,22 @@ ANSWER: B"
       function renderStaffRecentSubmissions() {
         const staff = getCurrentStaff();
         if (!staff) return;
+        // activityLog is synced newest-first (see syncActivityLogFromSupabase).
+        // slice(-10) used to grab the LAST 10 array entries, which on a
+        // newest-first list are actually the 10 OLDEST matching entries —
+        // so once a staff member had more than 10 logged actions, every
+        // new action (student added, payment submitted, a student logging
+        // in under their branch) silently stopped showing up here, stuck
+        // forever on whatever the first 10 entries happened to be.
+        // slice(0, 10) takes the 10 newest instead; reverse() keeps the
+        // same oldest-to-newest display order as before.
         const log = (ls("activityLog") || [])
-          .filter((a) => a.staffId === staff.id)
-          .slice(-10)
+          .filter(
+            (a) =>
+              a.staffId === staff.id ||
+              (a.type === "student_login" && a.branch === staff.branch),
+          )
+          .slice(0, 10)
           .reverse();
         const el = document.getElementById("staffRecentSubmissions");
         if (!el) return;
