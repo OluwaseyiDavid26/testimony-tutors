@@ -17929,8 +17929,7 @@ ANSWER: B"
         showWelcomeModal();
       }
 
-      function loadStaffDashboard() {
-        syncAppSettingsFromSupabase().then(() => renderTopBarLogo());
+      async function loadStaffDashboard() {
         const staff = getCurrentStaff();
         if (!staff) return;
         document.getElementById("staffWelcomeName").textContent =
@@ -17939,6 +17938,25 @@ ANSWER: B"
           new Date().toDateString();
         document.getElementById("staffSidebarSub").textContent =
           staff.branch + " Branch";
+        renderTopBarLogo();
+        // renderStaffStats() / renderStaffRecentSubmissions() below read
+        // ls("students"), ls("payments"), ls("attendance") and
+        // ls("activityLog") — none of which were being synced from
+        // Supabase anywhere in this function before. That meant the staff
+        // dashboard just displayed whatever happened to already be cached
+        // on that specific device (nothing on a fresh device, stale data
+        // otherwise), which is exactly why the same staff account showed
+        // different "My Branch Students" numbers on different devices, and
+        // why a plain refresh didn't fix it — there was never a fresh
+        // fetch behind the numbers to refresh. Awaiting these syncs first
+        // matches the same pattern loadAdminDashboard() already uses.
+        await Promise.all([
+          syncAppSettingsFromSupabase(),
+          syncStudentsFromSupabase(),
+          syncPaymentsFromSupabase(),
+          syncAttendanceFromSupabase(),
+          syncActivityLogFromSupabase(),
+        ]);
         renderTopBarLogo();
         renderStaffStats();
         renderStaffRecentSubmissions();
@@ -17989,7 +18007,7 @@ ANSWER: B"
         const items = document.querySelectorAll("#staffDashboard .menu-item");
         if (items[idxMap[section]])
           items[idxMap[section]].classList.add("active");
-        if (section === "dashboard") loadStaffDashboard();
+        if (section === "dashboard") await loadStaffDashboard();
         if (section === "students") renderStaffStudentsTable();
         if (section === "attendance") renderStaffAttendanceTable();
         if (section === "payments") renderStaffPaymentsTable();
