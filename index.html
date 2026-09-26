@@ -80,6 +80,22 @@
         color: var(--text);
         min-height: 100vh;
         padding-bottom: env(safe-area-inset-bottom);
+        /* Safety net: nothing anywhere in the app should ever be able to
+           force horizontal scrolling on a narrow screen. This doesn't
+           change any existing layout that already fits — it only clips
+           the rare stray element that wouldn't. */
+        overflow-x: hidden;
+      }
+
+      /* Safety net: no <img> anywhere (student photos, logos, etc.) can
+         ever be wider than its container, so a large/unsized image can't
+         push a mobile layout into horizontal scroll. Explicitly sized
+         images (e.g. avatars using width/height + object-fit) are
+         unaffected since this only caps images that would otherwise
+         overflow. */
+      img {
+        max-width: 100%;
+        height: auto;
       }
 
       @keyframes scanAnim {
@@ -570,7 +586,10 @@
         padding: 14px 16px;
         border: 2px solid var(--border);
         border-radius: 14px;
-        font-size: 15px;
+        /* 16px, not 15px: below 16px, iOS Safari auto-zooms the whole page
+           every time a field is focused — a well-known mobile usability
+           bug on any form-heavy site (login, add student, record payment). */
+        font-size: 16px;
         transition: all 0.25s;
         background: var(--surface);
         color: var(--text);
