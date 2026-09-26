@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>Testimony Tutors -  Complete Management System</title>
+    <title>Testimony Tutors - Complete Management System</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="config.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -10610,10 +10610,29 @@ ANSWER: B"
       }
 
       async function syncStudentsFromSupabase() {
-        const { data, error } = await supabaseClient
-          .from("students")
-          .select("*")
-          .order("created_at", { ascending: true });
+        // Each student row carries a full base64 photo, so this request can
+        // run into the multiple-MB range (see Network tab). On a slow or
+        // unstable mobile connection that can fail outright, silently
+        // leaving the device stuck showing whatever was cached from its
+        // last successful sync — which is why the same staff account can
+        // show a different "My Branch Students" count on different
+        // devices at the same moment. Retrying a couple of times before
+        // giving up fixes that without changing what's fetched or how the
+        // result is used anywhere else.
+        let data, error;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          ({ data, error } = await supabaseClient
+            .from("students")
+            .select("*")
+            .order("created_at", { ascending: true }));
+          if (!error) break;
+          console.warn(
+            `syncStudentsFromSupabase attempt ${attempt} failed:`,
+            error,
+          );
+          if (attempt < 3)
+            await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
 
         if (error) {
           console.error("Failed to sync students from Supabase:", error);
@@ -20616,6 +20635,36 @@ ANSWER: B"
       // initWelcomeGate();
       // restoreSession();
       initData();
+
+      // "Today"-based stats (Present Today, Payment Alerts, etc.) are only
+      // computed when a dashboard loads/renders — nothing rechecks the
+      // clock afterwards. So a tab left open across midnight keeps showing
+      // the OLD day's numbers until someone manually reloads it, while a
+      // second device opened after midnight correctly shows the new day —
+      // same account, two different-looking dashboards, no actual data bug.
+      // This watches for the day changing and silently refreshes whichever
+      // dashboard is currently open so that stops happening.
+      let __lastKnownDateStr = fmtDate(new Date());
+      setInterval(() => {
+        const cur = fmtDate(new Date());
+        if (cur === __lastKnownDateStr) return;
+        __lastKnownDateStr = cur;
+        if (
+          document
+            .getElementById("adminDashboard")
+            ?.classList.contains("active")
+        ) {
+          loadAdminDashboard();
+        }
+        if (
+          document
+            .getElementById("staffDashboard")
+            ?.classList.contains("active")
+        ) {
+          loadStaffDashboard();
+        }
+      }, 60000);
+
       Promise.all([
         syncAppSettingsFromSupabase(),
         syncPaymentPlansFromSupabase(),
