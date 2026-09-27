@@ -3828,6 +3828,188 @@
       .grading-panel .section-header h2::before {
         content: "📊 ";
       }
+
+      /* =====================================================================
+         PREMIUM ANIMATION LAYER
+         Everything above this line is unchanged. Every rule below only adds
+         or upgrades motion (transitions / animations) on elements that
+         already exist in the markup — no layout, color, spacing, class
+         names, or JS-facing behaviour is touched. ID-card / print / PDF /
+         QR export elements are deliberately left alone so exported output
+         stays pixel-identical.
+         ===================================================================== */
+
+      :root {
+        --ease-premium: cubic-bezier(0.16, 1, 0.3, 1);
+        --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+      }
+
+      /* Respect users who've asked their OS for reduced motion */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      /* ---- Login card: zoom + fade entrance ---- */
+      @keyframes loginBoxIn {
+        from {
+          opacity: 0;
+          transform: scale(0.94) translateY(18px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      .login-box {
+        animation: loginBoxIn 0.55s var(--ease-premium) both;
+      }
+
+      /* ---- Dashboard switch: zoom + fade entrance ---- */
+      @keyframes dashboardZoomIn {
+        from {
+          opacity: 0;
+          transform: scale(0.97) translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      .dashboard.active {
+        animation: dashboardZoomIn 0.5s var(--ease-premium) both;
+      }
+
+      /* ---- Section navigation inside a dashboard: upgrades the existing
+         fade to a subtler zoom + fade for a more "premium" page-transition
+         feel, and staggers the cards inside as they appear ---- */
+      @keyframes sectionZoomIn {
+        from {
+          opacity: 0;
+          transform: scale(0.975) translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      .content-section.active {
+        animation: sectionZoomIn 0.45s var(--ease-premium) both;
+      }
+      .content-section.active .section-card {
+        animation: sectionZoomIn 0.4s var(--ease-premium) both;
+      }
+      .content-section.active .section-card:nth-of-type(1) {
+        animation-delay: 0.02s;
+      }
+      .content-section.active .section-card:nth-of-type(2) {
+        animation-delay: 0.07s;
+      }
+      .content-section.active .section-card:nth-of-type(3) {
+        animation-delay: 0.12s;
+      }
+      .content-section.active .section-card:nth-of-type(4) {
+        animation-delay: 0.17s;
+      }
+      .content-section.active .section-card:nth-of-type(n + 5) {
+        animation-delay: 0.2s;
+      }
+
+      /* ---- Stat cards: smoother lift + a little zoom on hover, plus a
+         gentle "pop" for the number whenever its section opens ---- */
+      .stat-card {
+        transition: all 0.35s var(--ease-premium);
+      }
+      .stat-card:hover {
+        transform: translateY(-4px) scale(1.015);
+      }
+      @keyframes numberPop {
+        0% {
+          opacity: 0;
+          transform: scale(0.7);
+        }
+        70% {
+          transform: scale(1.08);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      .content-section.active .stat-card .number {
+        display: inline-block;
+        animation: numberPop 0.45s var(--ease-bounce) both;
+        animation-delay: 0.12s;
+      }
+
+      /* ---- Branch / info cards: lift + zoom on hover ---- */
+      .branch-card {
+        transition: all 0.35s var(--ease-premium);
+      }
+      .branch-card:hover {
+        transform: translateY(-3px) scale(1.015);
+        box-shadow: 0 14px 32px rgba(15, 23, 42, 0.1);
+      }
+
+      /* ---- Buttons: consistent, slightly bouncier hover/press feel ---- */
+      .btn,
+      .login-btn,
+      .logout-btn,
+      .photo-upload-btn,
+      .math-toolbar button {
+        transition: all 0.25s var(--ease-premium);
+      }
+      .btn:hover,
+      .login-btn:hover {
+        transform: translateY(-2px) scale(1.015);
+      }
+      .photo-upload-btn:hover {
+        transform: translateY(-1px) scale(1.04);
+      }
+      .btn:active,
+      .login-btn:active,
+      .logout-btn:active,
+      .photo-upload-btn:active {
+        transform: scale(0.95);
+      }
+
+      /* ---- Photo / avatar zoom-in on hover — the circular frames already
+         clip overflow, so the zoom stays neatly inside ---- */
+      .wg-photo img,
+      .photo-preview img {
+        transition: transform 0.5s var(--ease-premium);
+      }
+      .wg-photo:hover img,
+      .photo-preview:hover img {
+        transform: scale(1.12);
+      }
+
+      /* ---- Sidebar menu items: subtle nudge on hover ---- */
+      .menu-item {
+        transition: all 0.25s var(--ease-premium);
+      }
+      .menu-item:hover {
+        transform: translateX(3px);
+      }
+
+      /* ---- Tabs: smoother active-state motion ---- */
+      .login-tab,
+      .att-tab,
+      .cat-tab,
+      .cbt-subject-tab,
+      .subject-tag {
+        transition: all 0.25s var(--ease-premium);
+      }
     </style>
   </head>
 
