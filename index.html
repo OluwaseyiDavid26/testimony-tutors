@@ -4615,8 +4615,8 @@
                     top: 50%;
                     left: 50%;
                     transform: translate(-50%, -50%);
-                    width: 70%;
-                    height: 50px;
+                    width: 85%;
+                    aspect-ratio: 1 / 1;
                     border: 3px solid var(--gold);
                     border-radius: 6px;
                     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
@@ -9018,8 +9018,8 @@ ANSWER: B"
                     top: 50%;
                     left: 50%;
                     transform: translate(-50%, -50%);
-                    width: 70%;
-                    height: 50px;
+                    width: 85%;
+                    aspect-ratio: 1 / 1;
                     border: 3px solid var(--gold);
                     border-radius: 6px;
                     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
@@ -12740,10 +12740,19 @@ ANSWER: B"
           // const durMins = Math.round((outTime - inTime) / 60000);
           // attendance[idx].duration = durMins > 0 ? durMins + " min" : "—";
           // ls("attendance", attendance);
-          const { error: clockOutError } = await supabaseClient
-            .from("attendance")
-            .update({ clock_out: timeStr, status: "clocked-out" })
-            .eq("id", todayEntry.id);
+          // Same fix as performClockIn: retry a transient network failure
+          // instead of failing a real clock-out outright.
+          let clockOutError;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            ({ error: clockOutError } = await supabaseClient
+              .from("attendance")
+              .update({ clock_out: timeStr, status: "clocked-out" })
+              .eq("id", todayEntry.id));
+            if (!clockOutError) break;
+            console.warn(`clock-out attempt ${attempt} failed:`, clockOutError);
+            if (attempt < 3)
+              await new Promise((r) => setTimeout(r, 1000 * attempt));
+          }
           if (clockOutError) {
             result.className = "scan-result error";
             result.style.display = "block";
@@ -12820,15 +12829,26 @@ ANSWER: B"
           second: "2-digit",
         });
 
-        const { error } = await supabaseClient.from("attendance").insert({
-          student_id: student.id,
-          date: todayStr,
-          branch: student.branch,
-          clock_in: timeStr,
-          clock_out: null,
-          status: "clocked-in",
-          clock_in_ms: Date.now(),
-        });
+        // "TypeError: Failed to fetch" means the request never reached
+        // Supabase at all (a network blip, not a database error), so a
+        // short retry is enough to ride out a momentary drop instead of
+        // failing a real clock-in outright.
+        let error;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          ({ error } = await supabaseClient.from("attendance").insert({
+            student_id: student.id,
+            date: todayStr,
+            branch: student.branch,
+            clock_in: timeStr,
+            clock_out: null,
+            status: "clocked-in",
+            clock_in_ms: Date.now(),
+          }));
+          if (!error) break;
+          console.warn(`performClockIn attempt ${attempt} failed:`, error);
+          if (attempt < 3)
+            await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
 
         if (error) {
           result.className = "scan-result error";
@@ -18827,10 +18847,22 @@ ANSWER: B"
             second: "2-digit",
           });
 
-          const { error: clockOutError } = await supabaseClient
-            .from("attendance")
-            .update({ clock_out: timeStr, status: "clocked-out" })
-            .eq("id", todayEntry.id);
+          // Same fix as staffPerformClockIn: retry a transient network
+          // failure instead of failing a real clock-out outright.
+          let clockOutError;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            ({ error: clockOutError } = await supabaseClient
+              .from("attendance")
+              .update({ clock_out: timeStr, status: "clocked-out" })
+              .eq("id", todayEntry.id));
+            if (!clockOutError) break;
+            console.warn(
+              `staff clock-out attempt ${attempt} failed:`,
+              clockOutError,
+            );
+            if (attempt < 3)
+              await new Promise((r) => setTimeout(r, 1000 * attempt));
+          }
 
           if (clockOutError) {
             result.className = "scan-result error";
@@ -18911,15 +18943,25 @@ ANSWER: B"
           second: "2-digit",
         });
 
-        const { error } = await supabaseClient.from("attendance").insert({
-          student_id: student.id,
-          date: todayStr,
-          branch: student.branch,
-          clock_in: timeStr,
-          clock_out: null,
-          status: "clocked-in",
-          clock_in_ms: Date.now(),
-        });
+        // Same fix as performClockIn: "TypeError: Failed to fetch" is a
+        // network-level failure, not a database error, so a short retry
+        // rides out a momentary drop instead of failing the clock-in.
+        let error;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          ({ error } = await supabaseClient.from("attendance").insert({
+            student_id: student.id,
+            date: todayStr,
+            branch: student.branch,
+            clock_in: timeStr,
+            clock_out: null,
+            status: "clocked-in",
+            clock_in_ms: Date.now(),
+          }));
+          if (!error) break;
+          console.warn(`staffPerformClockIn attempt ${attempt} failed:`, error);
+          if (attempt < 3)
+            await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
 
         if (error) {
           result.className = "scan-result error";
