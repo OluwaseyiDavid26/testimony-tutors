@@ -20712,3 +20712,6 @@ ANSWER: B"
     </script>
   </body>
 </html>
+photo-backup/
+node_modules/
+migrate-photos.mjs

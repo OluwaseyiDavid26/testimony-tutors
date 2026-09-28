@@ -12,19 +12,14 @@ export default {
       .eq("auth_user_id", userClaims.id)
       .single();
 
-    // if (callerErr || !callerStaff) {
-    //   return Response.json({ error: "Not authorized." }, { status: 403 });
-    // }
-
-    // const body = await req.json();
     if (callerErr || !callerStaff) {
-  return Response.json({ error: "Not authorized." }, { status: 403 });
-}
+      return Response.json({ error: "Not authorized." }, { status: 403 });
+    }
 
-// Server decides this — never trust the client for approval status
-const autoApprovalStatus = callerStaff.role === "admin" ? "approved" : "pending";
+    // Server decides this — never trust the client for approval status
+    const autoApprovalStatus = callerStaff.role === "admin" ? "approved" : "pending";
 
-const body = await req.json();
+    const body = await req.json();
 
     const {
       firstName, lastName, dob, gender, phone, address, branch,
@@ -45,17 +40,36 @@ const body = await req.json();
       return Response.json({ error: "Could not generate registration number." }, { status: 400 });
     }
 
-    const regNo = "TT" + (27000 + (count ?? 0) + 1);
-
     const password = lastName.toLowerCase().padEnd(6, "0");
-    const email = `${regNo.toLowerCase()}@student.testimonytutorportal.app`;
+    const baseNo = 27000 + (count ?? 0) + 1;
 
-    // 2. Create the Auth user (admin-only privileged action)
-    const { data: newUser, error: createErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true
-    });
+    // 2. Create the Auth user (admin-only privileged action).
+    // A reg no can collide with one that was already used and then freed up
+    // (e.g. a student was deleted from the table but their Auth login was
+    // never removed) — in that case createUser fails with "already
+    // registered" even though nothing is actually wrong with this
+    // registration. Retry with the next reg no instead of failing outright.
+    let regNo, email, newUser, createErr;
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      regNo = "TT" + (baseNo + attempt);
+      email = `${regNo.toLowerCase()}@student.testimonytutorportal.app`;
+
+      const result = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true
+      });
+      newUser = result.data;
+      createErr = result.error;
+
+      if (!createErr) break;
+
+      const msg = (createErr.message || "").toLowerCase();
+      const isDuplicate =
+        msg.includes("already") || msg.includes("registered") || msg.includes("exists");
+      if (!isDuplicate) break; // a different kind of failure — don't keep looping
+    }
 
     if (createErr || !newUser?.user) {
       return Response.json({ error: createErr?.message || "Failed to create login." }, { status: 400 });
@@ -87,8 +101,6 @@ const body = await req.json();
         eligible: eligible ?? false,
         approval_status: autoApprovalStatus,
         added_by: addedBy || callerStaff.id
-        // approval_status: "approved",
-        // added_by: addedBy || "admin"
       })
       .select()
       .single();
