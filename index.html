@@ -10631,6 +10631,15 @@ ANSWER: B"
           console.error("syncTestResults failed:", error);
           return;
         }
+        // The test-level flag (tests.results_posted) is the single source of
+        // truth for "results are published". Fetch it fresh so every subject
+        // and every student (including late submitters) reflects the admin's
+        // Post Results action, even if the per-row posted flag didn't persist.
+        const { data: postedTests } = await supabaseClient
+          .from("tests")
+          .select("id")
+          .eq("results_posted", true);
+        const postedTestIds = new Set((postedTests || []).map((t) => t.id));
         ls(
           "testResults",
           (data || []).map((row) => ({
@@ -10646,7 +10655,7 @@ ANSWER: B"
             grade: row.grade,
             timeTaken: row.time_taken || 0,
             date: row.date,
-            posted: row.posted,
+            posted: row.posted === true || postedTestIds.has(row.test_id),
             review: row.review || [],
           })),
         );
@@ -15672,13 +15681,22 @@ ANSWER: B"
       async function postTestResults() {
         if (!activeTestId) return;
 
-        const { error: testError } = await supabaseClient
+        // .select("id") makes Supabase return the rows it actually changed.
+        // Without it, a blocked update (RLS) looks like success.
+        const { data: testRows, error: testError } = await supabaseClient
           .from("tests")
           .update({ results_posted: true, status: "Completed" })
-          .eq("id", activeTestId);
+          .eq("id", activeTestId)
+          .select("id");
 
         if (testError) {
           alert("❌ Failed to post results: " + testError.message);
+          return;
+        }
+        if (!testRows || !testRows.length) {
+          alert(
+            "❌ Results were NOT posted: the database refused the update (no rows changed). Check admin permissions on the tests table.",
+          );
           return;
         }
 

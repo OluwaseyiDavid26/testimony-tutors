@@ -1,0 +1,24 @@
+{
+  "name": "testimony-tutor",
+  "version": "1.0.0",
+  "description": "",
+  "main": "config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OluwaseyiDavid26/testimony-tutors.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/OluwaseyiDavid26/testimony-tutors/issues"
+  },
+  "homepage": "https://github.com/OluwaseyiDavid26/testimony-tutors#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2"
+  }
+}
