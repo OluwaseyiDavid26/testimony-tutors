@@ -20,5 +20,8 @@
   "homepage": "https://github.com/OluwaseyiDavid26/testimony-tutors#readme",
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2"
+  },
+  "devDependencies": {
+    "supabase": "^2.119.0"
   }
 }
