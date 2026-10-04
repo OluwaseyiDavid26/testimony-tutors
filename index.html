@@ -11706,6 +11706,12 @@ ANSWER: B"
         renderTrackingTabs();
         renderTrackingContent();
         showModal("studentTrackingModal");
+        syncCBTResultsFromSupabase(s.regNo).then((ok) => {
+          if (ok && trackingStudentId === id) {
+            renderTrackingOverview(s);
+            renderTrackingContent();
+          }
+        });
       }
 
       function renderTrackingOverview(s) {
@@ -14017,11 +14023,38 @@ ANSWER: B"
         if (tab === "tokens") {
           renderCBTTokensAdmin();
           cbtUpdateTokenPreview();
+          syncCBTTokensFromSupabase().then((ok) => {
+            if (ok) renderCBTTokensAdmin();
+          });
         }
-        if (tab === "results") renderCBTResultsAdmin();
+        if (tab === "results") {
+          renderCBTResultsAdmin();
+          syncCBTResultsFromSupabase().then((ok) => {
+            if (ok) renderCBTResultsAdmin();
+          });
+        }
       }
 
       function renderCBTManagement() {
+        populateCBTSubjectDropdowns();
+        loadCBTGlobalSettings();
+        switchCBTAdminTab(cbtAdminTab);
+        cbtRefreshFromDb();
+      }
+
+      // Pull subjects, settings and questions from the database, then redraw.
+      async function cbtRefreshFromDb() {
+        const okSubjects = await syncCBTSubjectsFromSupabase(true);
+        await syncCBTSettingsFromSupabase();
+        const okQuestions = okSubjects
+          ? await syncCBTQuestionsFromSupabase()
+          : false;
+        if (!okSubjects || !okQuestions) {
+          alert(
+            "⚠️ Could not load CBT data from the server. Check your connection and reopen this page.",
+          );
+          return;
+        }
         populateCBTSubjectDropdowns();
         loadCBTGlobalSettings();
         switchCBTAdminTab(cbtAdminTab);
@@ -14126,11 +14159,18 @@ ANSWER: B"
         if (toggle) toggle.checked = settings.shuffleOptions !== false;
       }
 
-      function saveCBTGlobalSettings() {
-        const settings = ls("portal_cbt_settings") || {};
+      async function saveCBTGlobalSettings() {
+        await syncCBTSettingsFromSupabase();
+        const settings = Object.assign({}, ls("portal_cbt_settings") || {});
         settings.shuffleOptions = document.getElementById(
           "cbtShuffleOptionsToggle",
         ).checked;
+        const dbRes = await cbtSaveSettingsToDb(settings);
+        if (!dbRes.ok) {
+          alert("❌ Setting was NOT saved: " + dbRes.message);
+          loadCBTGlobalSettings();
+          return;
+        }
         ls("portal_cbt_settings", settings);
       }
 
@@ -14159,7 +14199,7 @@ ANSWER: B"
           "</div>";
       }
 
-      function addCBTSubject(e) {
+      async function addCBTSubject(e) {
         e.preventDefault();
         const input = document.getElementById("newCBTSubjectName");
         const name = input.value.trim();
@@ -14169,6 +14209,18 @@ ANSWER: B"
           alert("That subject already exists.");
           return;
         }
+        const { data: insSubj, error: insSubjErr } = await supabaseClient
+          .from("cbt_subjects")
+          .insert({ name })
+          .select("id")
+          .single();
+        if (insSubjErr) {
+          alert("❌ Subject was NOT added: " + insSubjErr.message);
+          return;
+        }
+        const subjectIdMap = ls("portal_cbt_subject_ids") || {};
+        subjectIdMap[name] = insSubj.id;
+        ls("portal_cbt_subject_ids", subjectIdMap);
         subjects.push(name);
         ls("portal_cbt_subjects", subjects);
         input.value = "";
@@ -14176,7 +14228,7 @@ ANSWER: B"
         populateCBTSubjectDropdowns();
       }
 
-      function deleteCBTSubject(name) {
+      async function deleteCBTSubject(name) {
         const questions = ls("portal_cbt_questions") || {};
         const count = (questions[name] || []).length;
         if (
@@ -14185,6 +14237,37 @@ ANSWER: B"
           )
         )
           return;
+        const subjectIdMap = ls("portal_cbt_subject_ids") || {};
+        const subjectDbId = subjectIdMap[name];
+        if (subjectDbId) {
+          const { error: qDelErr } = await supabaseClient
+            .from("cbt_questions")
+            .delete()
+            .eq("subject_id", subjectDbId);
+          if (qDelErr) {
+            alert(
+              "❌ Could not delete this subject's questions: " +
+                qDelErr.message,
+            );
+            return;
+          }
+          const { data: sDel, error: sDelErr } = await supabaseClient
+            .from("cbt_subjects")
+            .delete()
+            .eq("id", subjectDbId)
+            .select("id");
+          if (sDelErr || !sDel || !sDel.length) {
+            alert(
+              "❌ Subject was NOT deleted: " +
+                (sDelErr
+                  ? sDelErr.message
+                  : "the database refused the delete."),
+            );
+            return;
+          }
+          delete subjectIdMap[name];
+          ls("portal_cbt_subject_ids", subjectIdMap);
+        }
         let subjects = ls("portal_cbt_subjects") || [];
         subjects = subjects.filter((s) => s !== name);
         ls("portal_cbt_subjects", subjects);
@@ -14380,7 +14463,7 @@ ANSWER: B"
         showModal("cbtQuestionModal");
       }
 
-      function saveCBTQuestion(e) {
+      async function saveCBTQuestion(e) {
         e.preventDefault();
         const questions = ls("portal_cbt_questions") || {};
         const subject = document.getElementById("cbtQSubject").value;
@@ -14409,6 +14492,41 @@ ANSWER: B"
           explanation: document.getElementById("cbtQExplain").value,
           image: cbtQImageData || null,
         };
+        const subjectDbId = (ls("portal_cbt_subject_ids") || {})[subject];
+        if (!subjectDbId) {
+          alert(
+            "❌ This subject isn't in the database yet. Reopen CBT Management and try again.",
+          );
+          return;
+        }
+        const saveBtn = document.getElementById("cbtQuestionSaveBtn");
+        if (saveBtn) saveBtn.disabled = true;
+        let savedId = editId;
+        let dbErrMsg = null;
+        if (editId) {
+          const { data: upd, error: upErr } = await supabaseClient
+            .from("cbt_questions")
+            .update(cbtQuestionToRow(payload, subjectDbId))
+            .eq("id", editId)
+            .select("id");
+          if (upErr || !upd || !upd.length)
+            dbErrMsg = upErr
+              ? upErr.message
+              : "the database refused the update.";
+        } else {
+          const { data: ins, error: insErr } = await supabaseClient
+            .from("cbt_questions")
+            .insert(cbtQuestionToRow(payload, subjectDbId))
+            .select("id")
+            .single();
+          if (insErr) dbErrMsg = insErr.message;
+          else savedId = ins.id;
+        }
+        if (saveBtn) saveBtn.disabled = false;
+        if (dbErrMsg) {
+          alert("❌ Question was NOT saved: " + dbErrMsg);
+          return;
+        }
         if (editId) {
           if (originalSubject && questions[originalSubject]) {
             questions[originalSubject] = questions[originalSubject].filter(
@@ -14428,7 +14546,7 @@ ANSWER: B"
           questions[subject].push(
             Object.assign(
               {
-                id: "Q" + Date.now(),
+                id: savedId,
               },
               payload,
             ),
@@ -14440,8 +14558,20 @@ ANSWER: B"
         renderCBTSubjectsAdmin();
       }
 
-      function deleteCBTQuestion(subject, id) {
+      async function deleteCBTQuestion(subject, id) {
         if (!confirm("Delete this question?")) return;
+        const { data: qDel, error: qDelErr } = await supabaseClient
+          .from("cbt_questions")
+          .delete()
+          .eq("id", id)
+          .select("id");
+        if (qDelErr || !qDel || !qDel.length) {
+          alert(
+            "❌ Question was NOT deleted: " +
+              (qDelErr ? qDelErr.message : "the database refused the delete."),
+          );
+          return;
+        }
         const questions = ls("portal_cbt_questions") || {};
         if (questions[subject])
           questions[subject] = questions[subject].filter((q) => q.id !== id);
@@ -14502,7 +14632,7 @@ ANSWER: B"
         if (box) box.style.display = "none";
       }
 
-      function generateCBTToken(e) {
+      async function generateCBTToken(e) {
         e.preventDefault();
         const regNo = document.getElementById("cbtTokenStudentRegNo").value;
         if (!regNo) {
@@ -14555,6 +14685,22 @@ ANSWER: B"
           allowReuse: document.getElementById("cbtTokenAllowReuse").checked,
           usedAt: null,
         };
+        // Save to the database FIRST. If this fails nothing is shown, so the
+        // admin never gives a student a token that doesn't exist online.
+        let saved = await cbtInsertTokenToDb(token);
+        for (
+          let attempt = 0;
+          saved.error && saved.error.code === "23505" && attempt < 3;
+          attempt++
+        ) {
+          token.id = generateCBTTokenId(); // rare code clash - pick a new one
+          saved = await cbtInsertTokenToDb(token);
+        }
+        if (saved.error) {
+          console.error("Failed to save CBT token:", saved.error);
+          alert("❌ Token was NOT created: " + saved.error.message);
+          return;
+        }
         tokens.push(token);
         ls("portal_cbt_tokens", tokens);
         document.getElementById("cbtTokenGeneratedResult").innerHTML = `
@@ -14626,13 +14772,18 @@ ANSWER: B"
           .join("");
       }
 
-      function revokeCBTToken(id) {
+      async function revokeCBTToken(id) {
         if (
           !confirm(
             "Revoke this token? The student will no longer be able to use it.",
           )
         )
           return;
+        const dbRes = await cbtUpdateTokenInDb(id, { status: "Revoked" });
+        if (!dbRes.ok) {
+          alert("❌ Could not revoke token: " + dbRes.message);
+          return;
+        }
         const tokens = ls("portal_cbt_tokens") || [];
         const idx = tokens.findIndex((t) => t.id === id);
         if (idx >= 0) {
@@ -14642,7 +14793,7 @@ ANSWER: B"
         renderCBTTokensAdmin();
       }
 
-      function reactivateCBTToken(id) {
+      async function reactivateCBTToken(id) {
         const tokens = ls("portal_cbt_tokens") || [];
         const idx = tokens.findIndex((t) => t.id === id);
         if (idx < 0) return;
@@ -14662,12 +14813,28 @@ ANSWER: B"
           }[t.validityUnit];
           tokens[idx].expiresAt = Date.now() + t.validityAmount * unitMs;
         }
+        const dbRes = await cbtUpdateTokenInDb(id, {
+          status: "Active",
+          used: false,
+          expires_at: new Date(tokens[idx].expiresAt).toISOString(),
+        });
+        if (!dbRes.ok) {
+          alert("❌ Could not reactivate token: " + dbRes.message);
+          await syncCBTTokensFromSupabase();
+          renderCBTTokensAdmin();
+          return;
+        }
         ls("portal_cbt_tokens", tokens);
         renderCBTTokensAdmin();
       }
 
-      function deleteCBTToken(id) {
+      async function deleteCBTToken(id) {
         if (!confirm("Permanently delete this token record?")) return;
+        const dbRes = await cbtDeleteTokenInDb(id);
+        if (!dbRes.ok) {
+          alert("❌ Could not delete token: " + dbRes.message);
+          return;
+        }
         let tokens = ls("portal_cbt_tokens") || [];
         tokens = tokens.filter((t) => t.id !== id);
         ls("portal_cbt_tokens", tokens);
@@ -15478,24 +15645,52 @@ ANSWER: B"
             alert("Please select a subject.");
             return;
           }
-          const questions = ls("portal_cbt_questions") || {};
-          if (!questions[subject]) questions[subject] = [];
-          results.forEach((q, i) => {
-            questions[subject].push({
-              id: "Q" + Date.now() + "_" + i,
-              subject,
-              question: q.question,
-              options: q.options,
-              correct: q.correct,
-              marks: q.marks || 1,
-              topic: "",
-              difficulty: "Medium",
-              image: null,
-              explanation: q.explanation || "",
-            });
-          });
-          ls("portal_cbt_questions", questions);
+          const bulkSubjectId = (ls("portal_cbt_subject_ids") || {})[subject];
+          if (!bulkSubjectId) {
+            alert(
+              "❌ This subject isn't in the database yet. Reopen CBT Management and try again.",
+            );
+            return;
+          }
+          const bulkRows = results.map((q) =>
+            cbtQuestionToRow(
+              {
+                question: q.question,
+                options: q.options,
+                correct: q.correct,
+                marks: q.marks || 1,
+                topic: "",
+                difficulty: "Medium",
+                image: null,
+                explanation: q.explanation || "",
+              },
+              bulkSubjectId,
+            ),
+          );
+          let bulkSaved = 0;
+          for (let i = 0; i < bulkRows.length; i += 200) {
+            const { error: bulkErr } = await supabaseClient
+              .from("cbt_questions")
+              .insert(bulkRows.slice(i, i + 200));
+            if (bulkErr) {
+              alert(
+                "❌ Import stopped. " +
+                  bulkSaved +
+                  " of " +
+                  bulkRows.length +
+                  " question(s) were saved before this error: " +
+                  bulkErr.message,
+              );
+              await syncCBTQuestionsFromSupabase();
+              renderCBTQuestionsAdmin();
+              renderCBTSubjectsAdmin();
+              return;
+            }
+            bulkSaved += Math.min(200, bulkRows.length - i);
+          }
+          await syncCBTQuestionsFromSupabase();
           renderCBTQuestionsAdmin();
+          renderCBTSubjectsAdmin();
         } else if (bulkImportMode === "test") {
           if (!activeTestId) {
             alert("No test selected.");
@@ -16105,6 +16300,11 @@ ANSWER: B"
         ).toUpperCase();
         renderStudentStats(s);
         renderStudentActivities(s);
+        cbtFlushPendingResults()
+          .then(() => syncCBTResultsFromSupabase(s.regNo))
+          .then((ok) => {
+            if (ok) renderStudentStats(s);
+          });
       }
 
       function renderStudentStats(s) {
@@ -16827,6 +17027,376 @@ ANSWER: B"
         return "F";
       }
 
+      // =================== CBT TOKENS <-> SUPABASE ===================
+      // Tokens live in the cbt_tokens table, so a token made on the admin's
+      // device also works on the student's device. ls("portal_cbt_tokens")
+      // is kept as a local mirror so the existing screens work unchanged.
+      function cbtTokenFromRow(row) {
+        return {
+          id: row.token,
+          dbId: row.id,
+          studentRegNo: row.student_reg_no,
+          studentName: row.student_name,
+          subjects: row.subjects || [],
+          questionLimit: row.question_limit,
+          validityAmount: row.validity_amount,
+          validityUnit: row.validity_unit,
+          createdAt: row.created_at ? new Date(row.created_at).getTime() : null,
+          expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : null,
+          status: row.status || (row.used ? "Used" : "Active"),
+          allowReuse: row.allow_reuse === true,
+          usedAt: row.used_at ? new Date(row.used_at).getTime() : null,
+        };
+      }
+
+      // Admin: load every token into the local mirror. Returns true/false.
+      async function syncCBTTokensFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("cbt_tokens")
+          .select("*")
+          .order("created_at", { ascending: true });
+        if (error) {
+          console.error("syncCBTTokens failed:", error);
+          return false;
+        }
+        ls("portal_cbt_tokens", (data || []).map(cbtTokenFromRow));
+        return true;
+      }
+
+      // Student: look up just the one token they typed.
+      async function cbtFetchTokenByCode(code) {
+        const { data, error } = await supabaseClient
+          .from("cbt_tokens")
+          .select("*")
+          .eq("token", code)
+          .maybeSingle();
+        if (error) {
+          console.error("cbtFetchTokenByCode failed:", error);
+          return { token: null, error };
+        }
+        return { token: data ? cbtTokenFromRow(data) : null, error: null };
+      }
+
+      async function cbtInsertTokenToDb(token) {
+        const students = ls("students") || [];
+        const st = students.find((x) => x.regNo === token.studentRegNo);
+        return await supabaseClient.from("cbt_tokens").insert({
+          token: token.id,
+          student_id: st ? st.id : null,
+          student_reg_no: token.studentRegNo,
+          student_name: token.studentName,
+          subjects: token.subjects,
+          question_limit: token.questionLimit,
+          validity_amount: token.validityAmount,
+          validity_unit: token.validityUnit,
+          created_at: new Date(token.createdAt).toISOString(),
+          expires_at: new Date(token.expiresAt).toISOString(),
+          status: token.status,
+          allow_reuse: token.allowReuse,
+          used: false,
+          used_at: null,
+        });
+      }
+
+      // .select("id") makes Supabase return the rows it really changed, so a
+      // blocked update can't pretend to succeed.
+      async function cbtUpdateTokenInDb(code, fields) {
+        const { data, error } = await supabaseClient
+          .from("cbt_tokens")
+          .update(fields)
+          .eq("token", code)
+          .select("id");
+        if (error) return { ok: false, message: error.message };
+        if (!data || !data.length)
+          return {
+            ok: false,
+            message: "the database refused the change (no rows updated).",
+          };
+        return { ok: true };
+      }
+
+      async function cbtDeleteTokenInDb(code) {
+        const { data, error } = await supabaseClient
+          .from("cbt_tokens")
+          .delete()
+          .eq("token", code)
+          .select("id");
+        if (error) return { ok: false, message: error.message };
+        if (!data || !data.length)
+          return {
+            ok: false,
+            message: "the database refused the delete (no rows removed).",
+          };
+        return { ok: true };
+      }
+
+      // =================== CBT DATA <-> SUPABASE (subjects, settings, questions, results) ===================
+      // Same idea as the tokens: the database is the truth, and the portal_cbt_*
+      // values in localStorage are just a mirror so existing screens work as before.
+
+      // Supabase returns at most 1000 rows per request, so read big tables page by page.
+      async function cbtFetchAll(buildQuery) {
+        const pageSize = 1000;
+        let all = [];
+        for (let from = 0; ; from += pageSize) {
+          const { data, error } = await buildQuery(from, from + pageSize - 1);
+          if (error) return { data: null, error };
+          all = all.concat(data || []);
+          if (!data || data.length < pageSize) break;
+        }
+        return { data: all, error: null };
+      }
+
+      // ---- settings ----
+      async function syncCBTSettingsFromSupabase() {
+        const { data, error } = await supabaseClient
+          .from("cbt_settings")
+          .select("*")
+          .eq("id", 1)
+          .maybeSingle();
+        if (error) {
+          console.error("syncCBTSettings failed:", error);
+          return false;
+        }
+        if (data && data.settings) {
+          ls(
+            "portal_cbt_settings",
+            Object.assign(
+              { shuffleOptions: true, passMark: 50 },
+              data.settings,
+            ),
+          );
+        }
+        return true;
+      }
+
+      async function cbtSaveSettingsToDb(settings) {
+        const { error } = await supabaseClient
+          .from("cbt_settings")
+          .upsert({ id: 1, settings });
+        if (error) return { ok: false, message: error.message };
+        return { ok: true };
+      }
+
+      // ---- subjects ----
+      // seedIfEmpty (admin only): the very first time, copy the default subject
+      // list into the database so nothing disappears.
+      async function syncCBTSubjectsFromSupabase(seedIfEmpty) {
+        let { data, error } = await supabaseClient
+          .from("cbt_subjects")
+          .select("*");
+        if (error) {
+          console.error("syncCBTSubjects failed:", error);
+          return false;
+        }
+        if (seedIfEmpty && (!data || !data.length)) {
+          const settingsRes = await supabaseClient
+            .from("cbt_settings")
+            .select("*")
+            .eq("id", 1)
+            .maybeSingle();
+          if (settingsRes.error) return false;
+          const existing =
+            (settingsRes.data && settingsRes.data.settings) || {};
+          if (!existing.subjectsSeeded) {
+            const names = ls("portal_cbt_subjects") || CBT_DEFAULT_SUBJECTS;
+            const seed = await supabaseClient.from("cbt_subjects").upsert(
+              names.map((n) => ({ name: n })),
+              { onConflict: "name", ignoreDuplicates: true },
+            );
+            if (seed.error) {
+              console.error("seed CBT subjects failed:", seed.error);
+              return false;
+            }
+            await cbtSaveSettingsToDb(
+              Object.assign({}, existing, { subjectsSeeded: true }),
+            );
+            const again = await supabaseClient.from("cbt_subjects").select("*");
+            if (again.error) return false;
+            data = again.data;
+          }
+        }
+        const rows = (data || []).slice();
+        rows.sort((a, b) => {
+          const ia = CBT_DEFAULT_SUBJECTS.indexOf(a.name);
+          const ib = CBT_DEFAULT_SUBJECTS.indexOf(b.name);
+          if (ia < 0 && ib < 0) return a.name.localeCompare(b.name);
+          if (ia < 0) return 1;
+          if (ib < 0) return -1;
+          return ia - ib;
+        });
+        const ids = {};
+        rows.forEach((r) => {
+          ids[r.name] = r.id;
+        });
+        ls("portal_cbt_subject_ids", ids);
+        ls(
+          "portal_cbt_subjects",
+          rows.map((r) => r.name),
+        );
+        return true;
+      }
+
+      // ---- questions ----
+      function cbtQuestionFromRow(row, subjectName) {
+        let correct = Number.isInteger(row.correct_index)
+          ? row.correct_index
+          : Array.isArray(row.options)
+            ? row.options.indexOf(row.correct_answer)
+            : 0;
+        if (correct < 0) correct = 0;
+        return {
+          id: row.id,
+          subject: subjectName,
+          question: row.question_text,
+          options: row.options || [],
+          correct,
+          topic: row.topic || "",
+          difficulty: row.difficulty || "Medium",
+          marks: row.marks || 1,
+          explanation: row.explanation || "",
+          image: row.image || null,
+        };
+      }
+
+      function cbtQuestionToRow(q, subjectId) {
+        return {
+          subject_id: subjectId,
+          question_text: q.question,
+          options: q.options,
+          correct_answer: q.options[q.correct],
+          correct_index: q.correct,
+          topic: q.topic || null,
+          difficulty: q.difficulty || null,
+          marks: q.marks || 1,
+          explanation: q.explanation || "",
+          image: q.image || null,
+        };
+      }
+
+      // subjectNames omitted = admin (load everything). Given = student (just those subjects).
+      async function syncCBTQuestionsFromSupabase(subjectNames) {
+        const ids = ls("portal_cbt_subject_ids") || {};
+        const idToName = {};
+        Object.keys(ids).forEach((n) => {
+          idToName[ids[n]] = n;
+        });
+        let wantIds = null;
+        if (subjectNames) {
+          wantIds = subjectNames.map((n) => ids[n]).filter(Boolean);
+        }
+        const map = subjectNames ? ls("portal_cbt_questions") || {} : {};
+        const names = subjectNames || Object.keys(ids);
+        names.forEach((n) => {
+          map[n] = [];
+        });
+        if (!wantIds || wantIds.length) {
+          const { data, error } = await cbtFetchAll((from, to) => {
+            let q = supabaseClient
+              .from("cbt_questions")
+              .select("*")
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .range(from, to);
+            if (wantIds) q = q.in("subject_id", wantIds);
+            return q;
+          });
+          if (error) {
+            console.error("syncCBTQuestions failed:", error);
+            return false;
+          }
+          data.forEach((row) => {
+            const n = idToName[row.subject_id];
+            if (!n) return;
+            map[n].push(cbtQuestionFromRow(row, n));
+          });
+        }
+        ls("portal_cbt_questions", map);
+        return true;
+      }
+
+      // ---- results ----
+      function cbtResultSummary(result) {
+        const s = Object.assign({}, result);
+        s.subjects = (result.subjects || []).map((sub) => {
+          const c = Object.assign({}, sub);
+          delete c.review;
+          return c;
+        });
+        delete s.review;
+        return s;
+      }
+
+      async function cbtUploadResult(result) {
+        const cur = ls("currentStudent") || {};
+        const students = ls("students") || [];
+        const found = students.find((x) => x.regNo === result.regNo);
+        const sid =
+          result.studentId ||
+          (cur.regNo === result.regNo ? cur.id : null) ||
+          (found ? found.id : null);
+        if (!sid) return false;
+        const { error } = await supabaseClient.from("cbt_results").insert({
+          student_id: sid,
+          reg_no: result.regNo,
+          legacy_id: result.id,
+          score: result.score,
+          total: result.totalMarks,
+          completed_at: new Date().toISOString(),
+          payload: result,
+          summary: cbtResultSummary(result),
+        });
+        // 23505 = this exact result is already stored (a retry) - that's fine
+        if (error && error.code !== "23505") {
+          console.error("cbtUploadResult failed:", error);
+          return false;
+        }
+        return true;
+      }
+
+      async function cbtFlushPendingResults() {
+        const pending = ls("portal_cbt_pending_results") || [];
+        if (!pending.length) return;
+        const still = [];
+        for (const r of pending) {
+          const ok = await cbtUploadResult(r);
+          if (!ok) still.push(r);
+        }
+        ls("portal_cbt_pending_results", still);
+      }
+
+      // regNo given = one student's full results (with answer review).
+      // omitted = admin list (summaries only, so it stays light).
+      async function syncCBTResultsFromSupabase(regNo) {
+        const { data, error } = await cbtFetchAll((from, to) => {
+          let q = supabaseClient
+            .from("cbt_results")
+            .select(regNo ? "id,payload" : "id,summary")
+            .order("completed_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
+          if (regNo) q = q.eq("reg_no", regNo);
+          return q;
+        });
+        if (error) {
+          console.error("syncCBTResults failed:", error);
+          return false;
+        }
+        const fromDb = data
+          .map((r) => (regNo ? r.payload : r.summary))
+          .filter(Boolean);
+        let merged = regNo
+          ? (ls("portal_cbt_results") || [])
+              .filter((x) => x.regNo !== regNo)
+              .concat(fromDb)
+          : fromDb;
+        (ls("portal_cbt_pending_results") || []).forEach((p) => {
+          if (!merged.some((x) => x.id === p.id)) merged.push(p);
+        });
+        ls("portal_cbt_results", merged);
+        return true;
+      }
+
       function generateCBTTokenId() {
         const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         let code = "";
@@ -16873,11 +17443,17 @@ ANSWER: B"
         });
         const s = ls("currentStudent");
         if (!s) return;
-        if (tab === "attempts") renderCBTAttempts(s);
+        if (tab === "attempts") {
+          renderCBTAttempts(s);
+          syncCBTResultsFromSupabase(s.regNo).then((ok) => {
+            if (ok && cbtHubTab === "attempts") renderCBTAttempts(s);
+          });
+        }
       }
 
       function renderStudentCBT(s) {
         if (!s) return;
+        cbtFlushPendingResults(); // re-send any result that failed to upload earlier
         document.getElementById("cbtTokenValidationMsg").innerHTML = "";
         document.getElementById("cbtTokenInput").value = "";
         // Resume an in-progress session if the student left mid-exam (real-timestamp based)
@@ -16952,7 +17528,7 @@ ANSWER: B"
       // =================== TOKEN VALIDATION ===================
       let cbtValidatedToken = null;
 
-      function validateCBTToken() {
+      async function validateCBTToken() {
         const s = ls("currentStudent");
         if (!s) return;
         const code = document
@@ -16965,8 +17541,23 @@ ANSWER: B"
             '<p style="color:var(--danger);font-size:13px">Please enter a token.</p>';
           return;
         }
-        const tokens = ls("portal_cbt_tokens") || [];
-        const token = tokens.find((t) => t.id.toUpperCase() === code);
+        msgEl.innerHTML =
+          '<p style="color:var(--muted);font-size:13px">Checking token…</p>';
+        const lookup = await cbtFetchTokenByCode(code);
+        if (lookup.error) {
+          msgEl.innerHTML =
+            '<p style="color:var(--danger);font-size:13px">⚠️ Could not reach the server. Check your internet connection and try again.</p>';
+          return;
+        }
+        const token = lookup.token;
+        if (token) {
+          // keep a local copy so the rest of the exam flow can find it
+          const localTokens = (ls("portal_cbt_tokens") || []).filter(
+            (t) => t.id !== token.id,
+          );
+          localTokens.push(token);
+          ls("portal_cbt_tokens", localTokens);
+        }
         if (!token) {
           msgEl.innerHTML =
             '<p style="color:var(--danger);font-size:13px">❌ Token not found. Double-check the code and try again.</p>';
@@ -16991,6 +17582,20 @@ ANSWER: B"
         if (status === "Expired") {
           msgEl.innerHTML =
             '<p style="color:var(--danger);font-size:13px">⏰ This token has expired. Ask your admin for a new one.</p>';
+          return;
+        }
+        msgEl.innerHTML =
+          '<p style="color:var(--muted);font-size:13px">Loading your exam questions…</p>';
+        const tokenSubjects =
+          token.subjects || (token.subject ? [token.subject] : []);
+        const okSubj = await syncCBTSubjectsFromSupabase(false);
+        await syncCBTSettingsFromSupabase();
+        const okQ = okSubj
+          ? await syncCBTQuestionsFromSupabase(tokenSubjects)
+          : false;
+        if (!okSubj || !okQ) {
+          msgEl.innerHTML =
+            '<p style="color:var(--danger);font-size:13px">⚠️ Could not load the exam questions. Check your internet connection and try again.</p>';
           return;
         }
         const questions = ls("portal_cbt_questions") || {};
@@ -17102,11 +17707,42 @@ ANSWER: B"
         });
       }
 
-      function launchCBTExam() {
+      async function launchCBTExam() {
         const token = cbtValidatedToken;
         if (!token) return;
         const s = ls("currentStudent");
         if (!s) return;
+        // Claim the token in the database first. The update only succeeds if
+        // the token is still Active, so it can't be used twice or after revoke.
+        if (!token.allowReuse) {
+          const launchBtn = document.getElementById("cbtLaunchBtn");
+          if (launchBtn) launchBtn.disabled = true;
+          const { data: claimed, error: claimErr } = await supabaseClient
+            .from("cbt_tokens")
+            .update({
+              status: "Used",
+              used: true,
+              used_at: new Date().toISOString(),
+            })
+            .eq("token", token.id)
+            .eq("status", "Active")
+            .select("id");
+          if (launchBtn) launchBtn.disabled = false;
+          if (claimErr) {
+            alert(
+              "⚠️ Could not reach the server. Check your internet connection and try again.",
+            );
+            return;
+          }
+          if (!claimed || !claimed.length) {
+            alert(
+              "⛔ This token is no longer valid (already used or revoked). Ask your admin for a new one.",
+            );
+            cbtValidatedToken = null;
+            showStudent("cbt");
+            return;
+          }
+        }
         const questions = ls("portal_cbt_questions") || {};
         const subjects =
           token.subjects || (token.subject ? [token.subject] : []);
@@ -17455,6 +18091,7 @@ ANSWER: B"
           const totalMarks = subjectData[subject].totalMarks;
           return {
             subject,
+            questionIds: questions.map((q) => q.id),
             totalQuestions: questions.length,
             attempted: questions.length - unansweredCount,
             correctCount,
@@ -17490,6 +18127,7 @@ ANSWER: B"
         const timeTaken = Math.round((Date.now() - startTimeMs) / 1000);
         const result = {
           id: "CBT" + Date.now(),
+          studentId: (ls("currentStudent") || {}).id || null,
           regNo: cbtState.regNo,
           studentName: cbtState.studentName,
           tokenId: cbtState.tokenId,
@@ -17512,6 +18150,17 @@ ANSWER: B"
         const results = ls("portal_cbt_results") || [];
         results.push(result);
         ls("portal_cbt_results", results);
+        // Send to the database in the background. If it fails (no internet),
+        // keep it queued on this device and retry automatically later.
+        cbtUploadResult(result).then((ok) => {
+          if (ok) return;
+          const pending = ls("portal_cbt_pending_results") || [];
+          pending.push(result);
+          ls("portal_cbt_pending_results", pending);
+          alert(
+            "⚠️ Your result could not be sent to the server yet (no connection?). It is saved on this phone and will upload automatically next time you open the CBT page while online. Please don't clear your browser data until then.",
+          );
+        });
         setCBTSession(cbtState.regNo, null);
         cbtState = {};
         cbtSubmitting = false;
