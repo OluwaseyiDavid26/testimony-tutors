@@ -10836,6 +10836,12 @@ ANSWER: B"
         ls("payments", mapped);
       }
 
+      // SPEED FIX: every student's photo is a base64 image, and this sync runs
+      // on every admin menu click and after most actions — so all photos were
+      // being re-downloaded again and again. Photos are only ever set at
+      // registration, so each one is now downloaded once per page load and
+      // reused. Everything else about the sync is unchanged.
+      const __studentPhotoCache = {};
       async function syncStudentsFromSupabase() {
         // Each student row carries a full base64 photo, so this request can
         // run into the multiple-MB range (see Network tab). On a slow or
@@ -10852,7 +10858,7 @@ ANSWER: B"
             .from("students")
             // .select("*")
             .select(
-              "id, reg_no, first_name, last_name, full_name, dob, gender, phone, address, branch, department, class_session, exam_types, subjects, reg_date, payment_plan, amount_paid, payment_date, guardian_name, guardian_phone, status, photo_url, eligible, approval_status, added_by, created_at",
+              "id, reg_no, first_name, last_name, full_name, dob, gender, phone, address, branch, department, class_session, exam_types, subjects, reg_date, payment_plan, amount_paid, payment_date, guardian_name, guardian_phone, status, eligible, approval_status, added_by, created_at",
             )
             .order("created_at", { ascending: true }));
           if (!error) break;
@@ -10868,6 +10874,31 @@ ANSWER: B"
           console.error("Failed to sync students from Supabase:", error);
           return;
         }
+
+        const __prevPhotos = {};
+        (ls("students") || []).forEach((st) => {
+          __prevPhotos[st.id] = st.photo;
+        });
+        const __missingPhotoIds = (data || [])
+          .filter((r) => !(r.id in __studentPhotoCache))
+          .map((r) => r.id);
+        const __chunks = [];
+        for (let i = 0; i < __missingPhotoIds.length; i += 30)
+          __chunks.push(__missingPhotoIds.slice(i, i + 30));
+        await Promise.all(
+          __chunks.map(async (ids) => {
+            try {
+              const { data: ph, error: phErr } = await supabaseClient
+                .from("students")
+                .select("id, photo_url")
+                .in("id", ids);
+              if (phErr) return;
+              (ph || []).forEach((r) => {
+                __studentPhotoCache[r.id] = r.photo_url || null;
+              });
+            } catch (_) {}
+          }),
+        );
 
         const mapped = (data || []).map((row) => ({
           id: row.id,
@@ -10891,7 +10922,10 @@ ANSWER: B"
           guardianName: row.guardian_name,
           guardianPhone: row.guardian_phone,
           status: row.status,
-          photo: row.photo_url,
+          photo:
+            row.id in __studentPhotoCache
+              ? __studentPhotoCache[row.id]
+              : __prevPhotos[row.id] || null,
           eligible: row.eligible,
           approvalStatus: row.approval_status,
           addedBy: row.added_by,
@@ -13974,6 +14008,30 @@ ANSWER: B"
           alert("Please enter a valid amount greater than ₦0.");
           return;
         }
+
+        // NEW: double-check before saving. Also warns if the exact same
+        // payment (student + amount + date) is already on record.
+        const alreadyPaid = student.amountPaid || 0;
+        const looksDuplicate = (ls("payments") || []).some(
+          (x) =>
+            x.regNo === student.regNo &&
+            x.amount === amountNow &&
+            x.date === date &&
+            x.approvalStatus !== "rejected",
+        );
+        const confirmMsg =
+          "Please confirm this payment:\n\n" +
+          "Student: " + student.fullName + " (" + student.regNo + ")\n" +
+          "Amount: ₦" + amountNow.toLocaleString() + "\n" +
+          "Date: " + date + "\n" +
+          "Paid so far: ₦" + alreadyPaid.toLocaleString() +
+          "  →  New total: ₦" + (alreadyPaid + amountNow).toLocaleString() + "\n" +
+          (looksDuplicate
+            ? "\n⚠️ WARNING: a payment of exactly ₦" + amountNow.toLocaleString() +
+              " for this student on " + date + " is ALREADY recorded. This may be a duplicate!\n"
+            : "") +
+          "\nIs this correct? Press OK to record it.";
+        if (!confirm(confirmMsg)) return;
 
         const { data, error } = await supabaseClient.rpc("record_payment", {
           p_student_id: student.id,
