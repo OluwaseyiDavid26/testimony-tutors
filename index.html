@@ -5161,6 +5161,7 @@
                     <th>Balance</th>
                     <th>Expiry</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody id="paymentsTableBody"></tbody>
@@ -10333,7 +10334,22 @@ ANSWER: B"
         ls("staffAccounts", mapped);
       }
 
+      // FIX (duplicate logins): the real handler is below, unchanged. This thin
+      // wrapper stops a second tap / Enter press from running it again while the
+      // first login is still waiting on the network.
+      let __studentLoginBusy = false;
       async function handleStudentLogin(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (__studentLoginBusy) return;
+        __studentLoginBusy = true;
+        try {
+          await _handleStudentLoginImpl(e);
+        } finally {
+          __studentLoginBusy = false;
+        }
+      }
+
+      async function _handleStudentLoginImpl(e) {
         e.preventDefault();
         const regNo = document.getElementById("studentRegNo").value.trim();
         const pwd = document.getElementById("studentPassword").value;
@@ -10951,7 +10967,7 @@ ANSWER: B"
         const grid = document.getElementById("adminStatsGrid");
         grid.innerHTML = `
                                                                                                   <div class="stat-card" onclick="showAdmin('students')"><div class="label">Total Students</div><div class="number">${students.length}</div><div class="sub">Across all branches</div></div>
-                                                                                                  <div class="stat-card" onclick="showAdmin('attendance')"><div class="label">Present Today</div><div class="number" style="color:var(--success)">${todayAttend.filter((a) => a.status === "clocked-in" || a.clockOut).length}</div><div class="sub">Clock-ins today</div></div>
+                                                                                                  <div class="stat-card" onclick="showAdmin('attendance')"><div class="label">Present Today</div><div class="number" style="color:var(--success)">${new Set(todayAttend.filter((a) => a.status === "clocked-in" || a.clockOut).map((a) => a.regNo)).size}</div><div class="sub">Clock-ins today</div></div>
                                                                                                   <div class="stat-card" onclick="showAdmin('payments')"><div class="label">Total Collected</div><div class="number">₦${(totalCollected / 1000).toFixed(0)}k</div><div class="sub">All payments</div></div>
                                                                                                   <div class="stat-card" onclick="showAdmin('payments')" style="${alerts.length ? "border-color:var(--warning)" : ""}"><div class="label">Payment Alerts</div><div class="number" style="color:${alerts.length ? "var(--warning)" : "var(--success)"}">${alerts.length}</div><div class="sub">Expiring / expired</div></div>
                                                                                               `;
@@ -13036,7 +13052,53 @@ ANSWER: B"
       //     ls("attendance") || []
       //   ).filter((a) => a.date === fmtDate(new Date())).length;
       // }
+      // FIX (multiple attendance): the old retry loop re-inserted the row whenever
+      // the RESPONSE was lost, even though the first insert had already reached
+      // Supabase — that is how one student got 4-5 rows. Now every attempt first
+      // checks whether today's row already exists, and a clock-in already in
+      // progress for the same student is ignored.
+      const __attendanceBusy = new Set();
+      async function insertAttendanceOnce(student, todayStr, timeStr) {
+        let error;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const { data: existing } = await supabaseClient
+              .from("attendance")
+              .select("id")
+              .eq("student_id", student.id)
+              .eq("date", todayStr)
+              .limit(1);
+            if (existing && existing.length) return { error: null };
+          } catch (_) {}
+          ({ error } = await supabaseClient.from("attendance").insert({
+            student_id: student.id,
+            date: todayStr,
+            branch: student.branch,
+            clock_in: timeStr,
+            clock_out: null,
+            status: "clocked-in",
+            clock_in_ms: Date.now(),
+          }));
+          if (!error) break;
+          if (error.code === "23505") return { error: null };
+          console.warn(`clock-in attempt ${attempt} failed:`, error);
+          if (attempt < 3)
+            await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+        return { error };
+      }
+
       async function performClockIn(student) {
+        if (__attendanceBusy.has(student.id)) return;
+        __attendanceBusy.add(student.id);
+        try {
+          await _performClockInImpl(student);
+        } finally {
+          __attendanceBusy.delete(student.id);
+        }
+      }
+
+      async function _performClockInImpl(student) {
         const result = document.getElementById("scanResult");
         const now = new Date();
         const todayStr = fmtDate(now);
@@ -13051,21 +13113,7 @@ ANSWER: B"
         // short retry is enough to ride out a momentary drop instead of
         // failing a real clock-in outright.
         let error;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          ({ error } = await supabaseClient.from("attendance").insert({
-            student_id: student.id,
-            date: todayStr,
-            branch: student.branch,
-            clock_in: timeStr,
-            clock_out: null,
-            status: "clocked-in",
-            clock_in_ms: Date.now(),
-          }));
-          if (!error) break;
-          console.warn(`performClockIn attempt ${attempt} failed:`, error);
-          if (attempt < 3)
-            await new Promise((r) => setTimeout(r, 1000 * attempt));
-        }
+        ({ error } = await insertAttendanceOnce(student, todayStr, timeStr));
 
         if (error) {
           result.className = "scan-result error";
@@ -13607,9 +13655,94 @@ ANSWER: B"
                                                                                                       <td>${balance > 0 ? '<b style="color:var(--danger)">₦' + balance.toLocaleString() + "</b>" : "₦0"}</td>
                                                                                                       <td>${exp ? exp.toDateString() : "—"}</td>
                                                                                                       <td>${s ? getFullPaymentBadge(s) : '<span class="badge badge-gray">Unknown</span>'}</td>
+                                                                                                      <td><button class="action-btn" style="background:#fee2e2;color:#b91c1c" onclick="deletePaymentAdmin('${p.id}')">🗑️ Remove</button></td>
                                                                                                   </tr>`;
           })
           .join("");
+      }
+
+      // NEW: admin can remove a duplicate payment (including admin-recorded
+      // ones and staff ones that were already approved). Takes the amount back
+      // off the student's total paid so the balance / expiry fix themselves.
+      let __deletePaymentBusy = false;
+      async function deletePaymentAdmin(id) {
+        const me = getCurrentStaff();
+        if (!me || me.role !== "admin") {
+          alert("Only an admin can remove a payment.");
+          return;
+        }
+        if (__deletePaymentBusy) return;
+        const p = (ls("payments") || []).find((x) => x.id === id);
+        if (!p) return;
+        if (
+          !confirm(
+            `Remove this payment?\n\n${p.student} (${p.regNo})\n${p.date} — ₦${(p.amount || 0).toLocaleString()}\n\nThe amount will be taken off the student's total paid. This cannot be undone.`,
+          )
+        )
+          return;
+        __deletePaymentBusy = true;
+        try {
+          const { data: stu, error: sErr } = await supabaseClient
+            .from("students")
+            .select("id, amount_paid")
+            .eq("reg_no", p.regNo)
+            .single();
+          if (sErr || !stu) {
+            alert("❌ Could not find the student: " + (sErr ? sErr.message : ""));
+            return;
+          }
+          const { data: gone, error: dErr } = await supabaseClient
+            .from("payments")
+            .delete()
+            .eq("id", id)
+            .select("id");
+          if (dErr) {
+            alert("❌ Failed to remove payment: " + dErr.message);
+            return;
+          }
+          if (!gone || !gone.length) {
+            alert("ℹ️ That payment was already removed.");
+            await syncPaymentsFromSupabase();
+            renderPaymentsSection();
+            return;
+          }
+          const wasCounted = p.approvalStatus !== "pending" && p.approvalStatus !== "rejected";
+          if (wasCounted) {
+            const newPaid = Math.max(0, (stu.amount_paid || 0) - (p.amount || 0));
+            const { error: uErr } = await supabaseClient
+              .from("students")
+              .update({ amount_paid: newPaid })
+              .eq("id", stu.id);
+            if (uErr)
+              alert("⚠️ Payment removed but student total update failed: " + uErr.message);
+          }
+          // best effort: drop one matching line from the student's payment history
+          try {
+            const { data: h } = await supabaseClient
+              .from("student_payment_history")
+              .select("id")
+              .eq("student_id", stu.id)
+              .eq("date", p.date)
+              .eq("amount", p.amount)
+              .limit(1);
+            if (h && h.length)
+              await supabaseClient.from("student_payment_history").delete().eq("id", h[0].id);
+          } catch (_) {}
+          logActivity(
+            me,
+            "payment",
+            `Removed duplicate payment of ₦${(p.amount || 0).toLocaleString()} for ${p.student} (${p.regNo}) dated ${p.date}`,
+            "info",
+          );
+          await syncStudentsFromSupabase();
+          await syncPaymentsFromSupabase();
+          renderPaymentsSection();
+          updateAlertBadges();
+          renderAdminStats();
+          alert("✅ Payment removed.");
+        } finally {
+          __deletePaymentBusy = false;
+        }
       }
 
       function printPaymentStatusList(filter) {
@@ -13811,7 +13944,21 @@ ANSWER: B"
       //     `✅ Payment of ₦${amountNow.toLocaleString()} recorded!\nTotal paid: ₦${students[idx].amountPaid.toLocaleString()}\n${balance > 0 ? "⚠️ Balance remaining: ₦" + balance.toLocaleString() : "✅ Fully paid"}\nValid until: ${exp ? exp.toDateString() : "—"}`,
       //   );
       // }
+      // FIX (duplicate payments): wrapper blocks a second tap while the first
+      // payment is still being saved. Real handler below is unchanged.
+      let __adminPaymentBusy = false;
       async function recordPayment(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (__adminPaymentBusy) return;
+        __adminPaymentBusy = true;
+        try {
+          await _recordPaymentImpl(e);
+        } finally {
+          __adminPaymentBusy = false;
+        }
+      }
+
+      async function _recordPaymentImpl(e) {
         e.preventDefault();
         const regNo = document.getElementById("paymentStudentId").value.trim();
         const amountNow =
@@ -16402,7 +16549,10 @@ ANSWER: B"
           selectedAssessmentSubject = null;
           renderStudentAssessments(s);
         }
-        if (section === "payments") renderStudentPayments(s);
+        if (section === "payments") {
+          renderStudentPayments(s);
+          loadStudentPaymentsFresh(s);
+        }
         if (section === "cbt") {
           stopCBTTimer();
           renderStudentCBT(s);
@@ -16984,6 +17134,62 @@ ANSWER: B"
           if (window.MathJax)
             MathJax.typesetPromise && MathJax.typesetPromise();
         }, 300);
+      }
+
+      // FIX (payment breakdown missing): a student's device never downloaded
+      // their payments after login, so the table was always empty and the plan
+      // info was whatever it was at login. This fetches THEIR OWN approved
+      // payments + latest plan figures when the Payments tab opens.
+      async function loadStudentPaymentsFresh(s) {
+        try {
+          const [{ data: row }, { data: rows, error }] = await Promise.all([
+            supabaseClient
+              .from("students")
+              .select("amount_paid, payment_date, payment_plan, class_session")
+              .eq("id", s.id)
+              .maybeSingle(),
+            supabaseClient
+              .from("payments")
+              .select("*")
+              .eq("student_id", s.id)
+              .or("approval_status.is.null,approval_status.eq.approved")
+              .order("created_at", { ascending: true }),
+          ]);
+          if (error) {
+            console.error("Failed to load student payments:", error);
+            return;
+          }
+          let fresh = s;
+          if (row) {
+            fresh = {
+              ...s,
+              amountPaid: row.amount_paid,
+              paymentDate: row.payment_date,
+              paymentPlan: row.payment_plan,
+              classSession: row.class_session,
+            };
+            ls("currentStudent", fresh);
+            renderStudentStats(fresh);
+          }
+          ls(
+            "payments",
+            (rows || []).map((r) => ({
+              id: r.id,
+              date: r.date,
+              student: s.fullName,
+              regNo: s.regNo,
+              branch: s.branch,
+              plan: r.plan,
+              amount: r.amount,
+              status: r.status,
+              approvalStatus: r.approval_status,
+              submittedBy: r.submitted_by,
+            })),
+          );
+          renderStudentPayments(fresh);
+        } catch (err) {
+          console.error("loadStudentPaymentsFresh failed:", err);
+        }
       }
 
       function renderStudentPayments(s) {
@@ -18730,6 +18936,19 @@ ANSWER: B"
       //   updateApprovalsBadge();
       // }
       async function logActivity(staff, type, description, status, meta) {
+        // FIX (duplicate logins): never write the same student's login twice
+        // within a minute (double-tap / slow-network retry).
+        if (type === "student_login" && meta && meta.regNo) {
+          const k = "__lastStudentLoginLog_" + meta.regNo;
+          let last = 0;
+          try {
+            last = parseInt(sessionStorage.getItem(k) || "0", 10) || 0;
+          } catch (_) {}
+          if (Date.now() - last < 60000) return;
+          try {
+            sessionStorage.setItem(k, String(Date.now()));
+          } catch (_) {}
+        }
         const { error } = await supabaseClient.from("activity_log").insert({
           staff_id: staff ? staff.id : null,
           type,
@@ -18742,6 +18961,10 @@ ANSWER: B"
           console.error("Failed to log activity:", error);
           return;
         }
+
+        // A student's own device never shows the activity log, so skip the
+        // 500-row re-download there (it only slowed their login down).
+        if (type === "student_login") return;
 
         await syncActivityLogFromSupabase();
         updateApprovalsBadge();
@@ -19833,6 +20056,16 @@ ANSWER: B"
       // }
 
       async function staffPerformClockIn(student, staff) {
+        if (__attendanceBusy.has(student.id)) return;
+        __attendanceBusy.add(student.id);
+        try {
+          await _staffPerformClockInImpl(student, staff);
+        } finally {
+          __attendanceBusy.delete(student.id);
+        }
+      }
+
+      async function _staffPerformClockInImpl(student, staff) {
         const result = document.getElementById("staffScanResult");
         const now = new Date();
         const todayStr = fmtDate(now);
@@ -19846,21 +20079,7 @@ ANSWER: B"
         // network-level failure, not a database error, so a short retry
         // rides out a momentary drop instead of failing the clock-in.
         let error;
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          ({ error } = await supabaseClient.from("attendance").insert({
-            student_id: student.id,
-            date: todayStr,
-            branch: student.branch,
-            clock_in: timeStr,
-            clock_out: null,
-            status: "clocked-in",
-            clock_in_ms: Date.now(),
-          }));
-          if (!error) break;
-          console.warn(`staffPerformClockIn attempt ${attempt} failed:`, error);
-          if (attempt < 3)
-            await new Promise((r) => setTimeout(r, 1000 * attempt));
-        }
+        ({ error } = await insertAttendanceOnce(student, todayStr, timeStr));
 
         if (error) {
           result.className = "scan-result error";
@@ -20078,7 +20297,19 @@ ANSWER: B"
       //   updateStaffBadges();
       //   renderStaffStats();
       // }
+      let __staffPaymentBusy = false;
       async function staffRecordPayment(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (__staffPaymentBusy) return;
+        __staffPaymentBusy = true;
+        try {
+          await _staffRecordPaymentImpl(e);
+        } finally {
+          __staffPaymentBusy = false;
+        }
+      }
+
+      async function _staffRecordPaymentImpl(e) {
         e.preventDefault();
         const staff = getCurrentStaff();
         if (!staff) return;
@@ -20637,12 +20868,22 @@ ANSWER: B"
         }
 
         // 1. Mark payment as approved
-        const { error: payErr } = await supabaseClient
+        // FIX: only approve if it is STILL pending — a double-tap used to add
+        // the same amount to the student's balance twice.
+        const { data: approvedRows, error: payErr } = await supabaseClient
           .from("payments")
           .update({ approval_status: "approved", status: "Paid" })
-          .eq("id", id);
+          .eq("id", id)
+          .eq("approval_status", "pending")
+          .select("id");
         if (payErr) {
           alert("❌ Failed: " + payErr.message);
+          return;
+        }
+        if (!approvedRows || !approvedRows.length) {
+          alert("ℹ️ This payment was already approved or rejected.");
+          await syncPaymentsFromSupabase();
+          renderApprovals();
           return;
         }
 
