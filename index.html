@@ -10538,10 +10538,23 @@ ANSWER: B"
       }
       // =================== ADMIN DASHBOARD ===================
       async function syncAttendanceFromSupabase() {
-        const { data, error } = await supabaseClient
-          .from("attendance")
-          .select("*, students(reg_no, full_name, branch)")
-          .order("created_at", { ascending: true });
+        const PAGE = 1000;
+        let data = [];
+        let error = null;
+        for (let from = 0; ; from += PAGE) {
+          const res = await supabaseClient
+            .from("attendance")
+            .select("*, students(reg_no, full_name, branch)")
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, from + PAGE - 1);
+          if (res.error) {
+            error = res.error;
+            break;
+          }
+          data = data.concat(res.data || []);
+          if (!res.data || res.data.length < PAGE) break;
+        }
 
         if (error) {
           console.error("Failed to sync attendance from Supabase:", error);
@@ -13722,7 +13735,9 @@ ANSWER: B"
             .eq("reg_no", p.regNo)
             .single();
           if (sErr || !stu) {
-            alert("❌ Could not find the student: " + (sErr ? sErr.message : ""));
+            alert(
+              "❌ Could not find the student: " + (sErr ? sErr.message : ""),
+            );
             return;
           }
           const { data: gone, error: dErr } = await supabaseClient
@@ -13740,15 +13755,22 @@ ANSWER: B"
             renderPaymentsSection();
             return;
           }
-          const wasCounted = p.approvalStatus !== "pending" && p.approvalStatus !== "rejected";
+          const wasCounted =
+            p.approvalStatus !== "pending" && p.approvalStatus !== "rejected";
           if (wasCounted) {
-            const newPaid = Math.max(0, (stu.amount_paid || 0) - (p.amount || 0));
+            const newPaid = Math.max(
+              0,
+              (stu.amount_paid || 0) - (p.amount || 0),
+            );
             const { error: uErr } = await supabaseClient
               .from("students")
               .update({ amount_paid: newPaid })
               .eq("id", stu.id);
             if (uErr)
-              alert("⚠️ Payment removed but student total update failed: " + uErr.message);
+              alert(
+                "⚠️ Payment removed but student total update failed: " +
+                  uErr.message,
+              );
           }
           // best effort: drop one matching line from the student's payment history
           try {
@@ -13760,7 +13782,10 @@ ANSWER: B"
               .eq("amount", p.amount)
               .limit(1);
             if (h && h.length)
-              await supabaseClient.from("student_payment_history").delete().eq("id", h[0].id);
+              await supabaseClient
+                .from("student_payment_history")
+                .delete()
+                .eq("id", h[0].id);
           } catch (_) {}
           logActivity(
             me,
@@ -14021,14 +14046,28 @@ ANSWER: B"
         );
         const confirmMsg =
           "Please confirm this payment:\n\n" +
-          "Student: " + student.fullName + " (" + student.regNo + ")\n" +
-          "Amount: ₦" + amountNow.toLocaleString() + "\n" +
-          "Date: " + date + "\n" +
-          "Paid so far: ₦" + alreadyPaid.toLocaleString() +
-          "  →  New total: ₦" + (alreadyPaid + amountNow).toLocaleString() + "\n" +
+          "Student: " +
+          student.fullName +
+          " (" +
+          student.regNo +
+          ")\n" +
+          "Amount: ₦" +
+          amountNow.toLocaleString() +
+          "\n" +
+          "Date: " +
+          date +
+          "\n" +
+          "Paid so far: ₦" +
+          alreadyPaid.toLocaleString() +
+          "  →  New total: ₦" +
+          (alreadyPaid + amountNow).toLocaleString() +
+          "\n" +
           (looksDuplicate
-            ? "\n⚠️ WARNING: a payment of exactly ₦" + amountNow.toLocaleString() +
-              " for this student on " + date + " is ALREADY recorded. This may be a duplicate!\n"
+            ? "\n⚠️ WARNING: a payment of exactly ₦" +
+              amountNow.toLocaleString() +
+              " for this student on " +
+              date +
+              " is ALREADY recorded. This may be a duplicate!\n"
             : "") +
           "\nIs this correct? Press OK to record it.";
         if (!confirm(confirmMsg)) return;
@@ -19995,20 +20034,22 @@ ANSWER: B"
         );
         if (!todayEntry) {
           const days = getDaysLeft(student);
-         if (days !== null && days < 0) {
-  const exp = getExpiryDate(student);
-  const balance = getBalanceOwed(student);
-  await staffPerformClockIn(student, staff);
-  result.innerHTML += `<br><span style="color:var(--warning);font-weight:700">⚠️ Fee expired ${Math.abs(days)} day(s) ago (${exp ? exp.toDateString() : "—"}). Balance: ₦${balance.toLocaleString()}. Please remind the student to pay.</span>`;
-  logActivity(
-    staff,
-    "attendance",
-    `Clocked in ${student.fullName} (${student.regNo}) with EXPIRED fee (${Math.abs(days)} day(s) overdue)`,
-    "warning",
-  );
-  return;
-}
-await staffPerformClockIn(student, staff);
+          if (days !== null && days < 0) {
+            const exp = getExpiryDate(student);
+            const balance = getBalanceOwed(student);
+            result.className = "scan-result error";
+            result.style.display = "block";
+            result.innerHTML = `⏰ ${student.fullName}'s fee expired ${Math.abs(days)} day(s) ago (${exp ? exp.toDateString() : "—"}). Balance: ₦${balance.toLocaleString()}.<br><b>Only the admin can override an expired fee.</b> Please direct the student to the admin.`;
+            logActivity(
+              staff,
+              "attendance",
+              `Blocked clock-in for ${student.fullName} (${student.regNo}) — fee expired`,
+              "blocked",
+            );
+            return;
+          }
+          // staffPerformClockIn(student, staff);
+          await staffPerformClockIn(student, staff);
         } else if (!todayEntry.clockOut) {
           const clockInMs = todayEntry.clockInTimeMs || 0;
           const elapsedMins = (Date.now() - clockInMs) / 60000;
