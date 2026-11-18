@@ -19995,22 +19995,20 @@ ANSWER: B"
         );
         if (!todayEntry) {
           const days = getDaysLeft(student);
-          if (days !== null && days < 0) {
-            const exp = getExpiryDate(student);
-            const balance = getBalanceOwed(student);
-            result.className = "scan-result error";
-            result.style.display = "block";
-            result.innerHTML = `⏰ ${student.fullName}'s fee expired ${Math.abs(days)} day(s) ago (${exp ? exp.toDateString() : "—"}). Balance: ₦${balance.toLocaleString()}.<br><b>Only the admin can override an expired fee.</b> Please direct the student to the admin.`;
-            logActivity(
-              staff,
-              "attendance",
-              `Blocked clock-in for ${student.fullName} (${student.regNo}) — fee expired`,
-              "blocked",
-            );
-            return;
-          }
-          // staffPerformClockIn(student, staff);
-          await staffPerformClockIn(student, staff);
+         if (days !== null && days < 0) {
+  const exp = getExpiryDate(student);
+  const balance = getBalanceOwed(student);
+  await staffPerformClockIn(student, staff);
+  result.innerHTML += `<br><span style="color:var(--warning);font-weight:700">⚠️ Fee expired ${Math.abs(days)} day(s) ago (${exp ? exp.toDateString() : "—"}). Balance: ₦${balance.toLocaleString()}. Please remind the student to pay.</span>`;
+  logActivity(
+    staff,
+    "attendance",
+    `Clocked in ${student.fullName} (${student.regNo}) with EXPIRED fee (${Math.abs(days)} day(s) overdue)`,
+    "warning",
+  );
+  return;
+}
+await staffPerformClockIn(student, staff);
         } else if (!todayEntry.clockOut) {
           const clockInMs = todayEntry.clockInTimeMs || 0;
           const elapsedMins = (Date.now() - clockInMs) / 60000;
